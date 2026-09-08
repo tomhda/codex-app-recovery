@@ -1,106 +1,86 @@
 # Codex App Recovery
 
-Windows版Codexの**黒画面**と、**内蔵ブラウザ・ローカルオートメーションの同時停止**に対する、非公式の応急復旧ツールです。
+**English** | [日本語](README.ja.md)
 
-Codexアプリの外で動くため、アプリが黒画面でも操作できます。復旧ツールの利用にCodex CLIやWSLは不要です。
+An **unofficial, experimental Windows recovery utility** for a blank/black Codex app window and stalled in-app browser / local automation capabilities. Both **English and Japanese** are supported throughout the app.
 
-[English](README.en.md) · [MIT License](LICENSE)
+It runs **outside the Codex app**, so you can operate it while the app UI is unavailable. Neither Codex CLI nor WSL is required to run this utility.
 
-![症状から操作を選ぶ復旧ウィンドウ](docs/screenshot.png)
+[MIT License](LICENSE)
 
-## できること
+![English recovery window](docs/screenshot-en.png)
 
-| 症状・状況 | 押すボタン | 動作 |
-|---|---|---|
-| 黒画面／内蔵ブラウザ・オートメーションが使えない | **まず復旧を試す** | 止まった読み取り処理を選んで解除・再取得。アプリは終了しません |
-| まだ黒い・表示が崩れている | **画面を読み直す** | 確認後にメイン画面を再読み込みし、復旧も試します |
-| 接続できない／アプリが起動していない | **Codexを開き直して復旧** | 接続がなければ、確認後にアプリを終了し、診断接続付きで起動。接続済みなら再起動しません |
-| 状態だけ知りたい | **状態だけ調べる** | 画面・機能一覧・設定読み込みを確認。復旧操作はしません |
+## Language
 
-**入口のボタンが同じでも、原因や処理が同じという意味ではありません。** 内蔵ブラウザ・オートメーションには共通の機能一覧があり、その取得停止を扱います。黒画面では、追加で設定読み込み・画面準備の既知の停止を扱います。
+Use the **Language / 言語** selector at the top right to switch between English and Japanese. The selection is saved for the next launch. On first launch, a Japanese Windows display language selects Japanese; other display languages select English.
 
-## インストール
+Buttons, explanations, progress, confirmation dialogs, results and app-defined errors follow your choice. The selector is disabled during recovery. Switching languages redraws the window and clears the displayed result; diagnostic logs are retained. Windows/package-manager error details may remain in their original language.
 
-必要なもの:
-
-- Windows 11（動作確認環境）。WindowsのMSIX版 `OpenAI.Codex`。
-- Python **3.10以降**とTcl/Tk。Python launcherの`py`、または`python`が使えること。
-- 初回セットアップ時のネット接続。依存パッケージは`websocket-client`のみです。
-
-1. [Releases](https://github.com/tomhda/codex-app-recovery/releases)からZIPをダウンロードし、保存したい場所に**展開**します。ZIP内から直接起動しないでください。
-2. `Setup.bat`をダブルクリックします。フォルダ内の`.venv`に実行環境を作成します。
-3. 必要なら、表示される確認でスタートメニュー・デスクトップのショートカットを追加します。
-4. `Codex-Recovery.bat`、または登録した **Codex App Recovery** を開きます。
-
-セットアップ後はフォルダを移動しないでください。移動した場合は古いショートカットと`.venv`を削除し、移動先でセットアップし直してください。
-
-スタートへのピン留めは、スタートで **Codex App Recovery** を検索し、右クリック →「スタートにピン留めする」。ピン留め自体の自動化は行いません。
-
-コマンドラインの場合:
+The choice is stored in `%LOCALAPPDATA%\CodexAppRecovery\settings.json`, separately from Codex settings. To override it for one launch without changing the saved choice:
 
 ```powershell
-py -3 setup_recovery.py
-.\.venv\Scripts\python.exe recovery.py --check
+.\.venv\Scripts\python.exe recovery.py --lang en
+.\.venv\Scripts\python.exe recovery.py --check --lang ja
 ```
 
-## 初めて使うとき
+Setup dialogs use the saved choice or Windows display language; `py -3 setup_recovery.py --lang en` overrides it for setup.
 
-まず「状態だけ調べる」または「まず復旧を試す」を押します。通常起動のCodexには診断接続がなく、接続できないことがあります。
+## Install
 
-その場合は、実行中のタスクの完了を確認して「Codexを開き直して復旧」を押してください。確認後、現在のMSIXインストール先を取得し、次のオプションで起動します。
+Requirements: Windows, the MSIX `OpenAI.Codex` app, and Python 3.10+ with Tcl/Tk. Python must be available through `py -3` or `python`.
+
+1. Download and extract a ZIP from [Releases](https://github.com/tomhda/codex-app-recovery/releases).
+2. Double-click **Setup.bat**. It creates a local `.venv` and installs `websocket-client`. Internet access is required during setup.
+3. Optionally add Start menu and desktop shortcuts when prompted.
+4. Open **Codex-Recovery.bat** or **Codex App Recovery** from Start.
+
+Keep the folder in its installed location. If you move it, remove the old shortcuts and `.venv`, then run setup again. To pin the shortcut, search for it in Start, right-click, and choose **Pin to Start**.
+
+## Controls
+
+| Button (English / Japanese) | When to use it | Action |
+|---|---|---|
+| Try recovery / まず復旧を試す | Black screen or missing browser/automation capabilities | Cancel/refetch selected stalled reads without closing the app |
+| Reload screen / 画面を読み直す | The screen is still blank or broken | Confirm, reload the main page, then attempt recovery; save unsent text first |
+| Reopen and recover / Codexを開き直して復旧 | The diagnostic connection is unavailable or the app is closed | Confirm, terminate the current app process tree if necessary, launch with loopback debugging, then attempt recovery |
+| Check status only / 状態だけ調べる | Inspect only | Read current state without recovery, reload or restart |
+
+The shared recovery button does **not** imply a shared cause: browser and automation failures use a common feature-list query; blank-screen recovery additionally handles selected configuration and UI-preparation reads.
+
+## Scope and limitations
+
+This is not an OpenAI product or a permanent fix. It depends on private app internals and may stop working after updates. State inspection and GUI operation have been checked on **Windows 11, Codex 26.901.6511.0**. Other builds are unverified; macOS, Linux and non-MSIX app installations are unsupported.
+
+The original manual recovery restored a black window **from an external Codex CLI session**, through an existing diagnostic connection, without restarting the app. Manual feature-list recovery also restored browser/automation capabilities and an actual scheduled run. Recurrence in another app process was observed. The packaged utility has passed mock recovery tests and real-app inspection, but **recovery of a fresh real black-screen recurrence and its app-termination/relaunch path have not been end-to-end tested**.
+
+Cancelling a stuck configuration read can let the app render with fallback defaults. A restored screen does not mean all settings were loaded. If partial settings are reported, verify your model, permissions and workspace before important operations. Enabled capability flags do not prove browsing or scheduled execution; check both in the app.
+
+Only known reads that remain pending/fetching across observations are eligible. Five seconds is a heuristic, not proof of a hang. Use recovery when symptoms are present. The tool does not edit authentication, history, automation definitions, permission files or app binaries. Recovering capabilities may allow overdue automations to resume.
+
+## Debugging connection and privacy
+
+If necessary, the tool starts the current MSIX executable with:
 
 ```text
 --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222
 ```
 
-アプリを終了する場合、**そのアプリから実行中のタスクも中断されます**。「画面を読み直す」では、未送信の文章を先に控えてください。
+Closing the app interrupts its running tasks. The UI requests confirmation first. Builds that do not expose debugging or whose query client cannot be identified are not repaired.
 
-## 対応範囲と限界
+**Never expose port 9222 to a network.** CDP can control the signed-in app. The tool checks that the listener belongs to the current Codex executable and is loopback-only. The endpoint remains available until that app process exits. A normal launch may require diagnostic preparation again.
 
-- **OpenAIの公式ツールではありません。** Codexの非公開内部構造に依存するため、更新で使えなくなる可能性があります。
-- Windows 11 / Codex **26.901.6511.0** で状態取得と画面表示を確認しています。他の版、macOS、Linux、非MSIX版は未検証または未対応です。
-- 黒画面の元になった事例では、**アプリ外のCodex CLIから**既存の診断接続を操作し、アプリを再起動せず画面が復帰しました。本ツールはその操作を独立プログラムにまとめたものです。
-- 内蔵ブラウザ・ローカルオートメーションの元の復旧操作では、機能復帰と自動化の実発火を確認しました。別プロセスでの再発も確認しています。
-- 完成ツールはGUI・実アプリの状態取得・模擬停止テストを検証済みです。**完成ツールでの実際の黒画面再発時の復旧と、終了を伴う起動準備は未検証**です。
-- 画面の復帰は設定の完全な復旧を意味しません。設定取得をキャンセルすると、アプリが一時的な既定値で画面を表示する場合があります。「設定の一部を読み込めていません」と出た場合、重要な作業の前にモデル・権限・作業先を確認してください。
-- 「有効」という結果は、ブラウザの実ページ表示やオートメーションの実発火の証明ではありません。両方ともアプリで確認してください。
-- 5秒間同じ未完了の読み取りを検出して対象にします。長い読み込みと異常停止を完全には区別できません。症状が出ているときに使ってください。
-- 診断接続が提供されない製品版や、内部構造を特定できない場合は停止します。認証や製品の制限を解除する機能はありません。
+No telemetry or diagnostic uploads are implemented. The app itself performs normal requests during refetch/recovery. Local logs under `%LOCALAPPDATA%\CodexAppRecovery\logs` omit query arguments and error details; they contain operational states, not credentials, settings bodies, conversation content, page text or screenshots. Review logs before attaching them to an issue.
 
-履歴・認証ファイル・オートメーション定義・権限設定の書き換えや、キャッシュフォルダの削除は行いません。アプリバイナリも改造しません。復旧によって、停止していたオートメーションが再開する可能性はあります。
-
-## ローカル診断接続とログ
-
-診断接続は認証済みアプリを操作できる強い権限を持ちます。**9222番ポートを外部へ公開しないでください。** 本ツールは接続前に、ポートの所有プロセスが現在のCodexアプリであることと、接続がループバックに限定されていることを確認します。
-
-診断オプションで起動したアプリを終了するまで、接続は有効です。通常の方法で起動し直すと診断接続はなくなる場合があり、次回の復旧で再び起動準備が必要になります。
-
-ツールからの診断データ送信やテレメトリはありません。アプリ自身は、再取得やオートメーション再開に伴い通常の通信を行います。
-
-診断ログは `%LOCALAPPDATA%\CodexAppRecovery\logs` に保存します。クエリの引数（作業フォルダ等）とエラー詳細は伏せ、状態のみを記録します。認証値、設定本文、ページ本文、会話本文、スクリーンショットは収集しません。Issueへ添付する前には内容を確認してください。
-
-## 仕組み
-
-Chrome DevTools Protocol（CDP）経由でメイン画面のReact Queryクライアントを特定し、既知の読み取りクエリだけを操作します。
-
-- 機能停止: `experimental-features / list / local`をキャンセルして再取得。
-- 黒画面: 本文と可視操作ボタンがない場合のみ、停止した`config / read-response`をキャンセルし、必要な画面準備の読み取りを再取得。
-- 2回の観測でクエリとPromiseが同じであることを確認し、操作直前にも再確認。
-- 状態が変わった処理、`pending/idle`、対象外のクエリは操作しません。
-
-CDP操作と待機はアプリ外で実行するため、Codex側が利用不能でも復旧ツールを操作できます。根本原因の修正や、毎回の復旧成功を保証するものではありません。
-
-## 開発・テスト
+## Development
 
 ```powershell
 py -3 setup_recovery.py --no-shortcuts
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 node tests/test_engine.cjs
 .\.venv\Scripts\python.exe recovery.py --gui-smoke
+.\.venv\Scripts\python.exe recovery.py --check
 ```
 
-Node.jsはJavaScriptの模擬テストだけに必要です。実アプリの状態確認は`--check`を使います。テストで実際のCodexを終了したり、障害を発生させたりはしません。
+Node.js is only required for the mock JavaScript tests. CI tests do not terminate or manipulate a real Codex app. Include OS/app versions, symptoms, selected action and results when reporting an issue; do not upload private information.
 
-不具合報告にはOS・Codexの版、症状、押したボタン、結果を添えてください。個人情報や認証情報を含むログは掲載しないでください。
-
-MIT License。OpenAIとの提携・承認を示すものではありません。
+MIT License. Not affiliated with or endorsed by OpenAI.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — 2026-09-08
+
+- English and Japanese UI: actions, instructions, progress, confirmations, results and app-defined errors.
+- Saved language selector, Windows display-language detection and one-launch `--lang` override.
+- English default README and full Japanese README, with screenshots in both languages.
+- Setup confirmation dialogs follow the selected language.
+- Localization coverage and preference tests; GUI smoke tests in both languages.
+
+Recovery scope and experimental limitations are unchanged.
+
 ## 0.1.0 — 2026-09-08
 
 - Independent Windows recovery window with symptom-based actions.

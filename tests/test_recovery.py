@@ -4,6 +4,11 @@ import recovery
 
 
 class RecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_language = recovery.get_language()
+        recovery.set_language('ja')
+        self.addCleanup(recovery.set_language, self.previous_language)
+
     def query(self, **changes):
         return {'key': ['experimental-features', 'list', 'local'], 'queryId': 1,
                 'promiseId': 2, 'status': 'pending', 'fetch': 'fetching',

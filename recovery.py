@@ -15,10 +15,11 @@ import urllib.parse
 import urllib.request
 
 import websocket
+from i18n import tr, get_language, set_language, resolve_language, save_language
 
 ROOT = Path(__file__).resolve().parent
 PORT = 9222
-APP_VERSION = '0.1.0'
+APP_VERSION = '0.2.0'
 ENGINE = (ROOT / 'engine.js').read_text(encoding='utf-8')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
@@ -35,7 +36,7 @@ def powershell(script: str, timeout=20):
         creationflags=NO_WINDOW,
     )
     if result.returncode:
-        raise RecoveryError('Windows側の状態を取得できません。\n' + result.stderr.strip()[:500])
+        raise RecoveryError(tr('Windows側の状態を取得できません。\n') + result.stderr.strip()[:500])
     return json.loads(result.stdout.strip())
 
 
@@ -58,9 +59,9 @@ def validate_listener(state):
     ids = {p['id'] for p in state['processes']}
     listeners = state['listeners']
     if not listeners:
-        raise RecoveryError('このツールからCodexに接続できません。下の「Codexを開き直して復旧」を押してください。')
+        raise RecoveryError(tr('このツールからCodexに接続できません。下の「Codexを開き直して復旧」を押してください。'))
     if any(p['pid'] not in ids or p['address'] not in ('127.0.0.1', '::1') for p in listeners):
-        raise RecoveryError('診断ポートが別のアプリ、またはローカル以外の接続に使われています。変更せず停止しました。')
+        raise RecoveryError(tr('診断ポートが別のアプリ、またはローカル以外の接続に使われています。変更せず停止しました。'))
 
 
 def redacted_record(value):
@@ -99,7 +100,7 @@ def main_page():
             if 'avatar-overlay' not in urllib.parse.parse_qs(url.query).get('initialRoute', [''])[0]:
                 eligible.append(page)
     if len(eligible) != 1:
-        raise RecoveryError('Codexのメイン画面を一意に特定できません。変更せず停止しました。')
+        raise RecoveryError(tr('Codexのメイン画面を一意に特定できません。変更せず停止しました。'))
     return eligible[0]
 
 
@@ -108,7 +109,7 @@ class Connection:
         url = page['webSocketDebuggerUrl']
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme != 'ws' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1') or parsed.port != PORT:
-            raise RecoveryError('診断接続先がローカルではありません。')
+            raise RecoveryError(tr('診断接続先がローカルではありません。'))
         self.socket = websocket.create_connection(url, timeout=18, suppress_origin=True, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
         self.counter = 0
 
@@ -124,9 +125,9 @@ class Connection:
             message = json.loads(self.socket.recv())
             if message.get('id') == self.counter:
                 if 'error' in message:
-                    raise RecoveryError('診断接続の操作に失敗しました。')
+                    raise RecoveryError(tr('診断接続の操作に失敗しました。'))
                 return message.get('result', {})
-        raise RecoveryError('アプリからの応答がありません。')
+        raise RecoveryError(tr('アプリからの応答がありません。'))
 
     def engine(self, action='snapshot', **kwargs):
         request = json.dumps({'action': action, **kwargs}, ensure_ascii=True)
@@ -134,10 +135,10 @@ class Connection:
         if 'exceptionDetails' in result:
             details = result['exceptionDetails']
             description = details.get('exception', {}).get('description', details.get('text', ''))
-            raise RecoveryError(description.split('\n')[0][:400])
+            raise RecoveryError(tr(description.split('\n')[0][:400].removeprefix('Error: ')))
         value = result.get('result', {}).get('value')
         if not isinstance(value, dict):
-            raise RecoveryError('アプリの状態を読み取れませんでした。')
+            raise RecoveryError(tr('アプリの状態を読み取れませんでした。'))
         return value
 
 
@@ -155,25 +156,25 @@ def stable_candidates(first, second):
 
 
 def describe(snapshot, mode='check'):
-    lines = ['画面：' + ('本文・操作ボタンが見つかりません' if snapshot['blank'] else '画面の内容を確認できました（実際の表示も確認してください）')]
+    lines = [tr('画面：') + (tr('本文・操作ボタンが見つかりません') if snapshot['blank'] else tr('画面の内容を確認できました（実際の表示も確認してください）'))]
     features = snapshot['features']
     if features['status'] == 'success' and features['fetch'] == 'idle':
-        lines.append('内蔵ブラウザ：' + ('有効' if features['browser'] is True else '有効を確認できません'))
-        lines.append('オートメーション：' + ('有効' if features['automation'] is True else '有効を確認できません'))
+        lines.append(tr('内蔵ブラウザ：') + (tr('有効') if features['browser'] is True else tr('有効を確認できません')))
+        lines.append(tr('オートメーション：') + (tr('有効') if features['automation'] is True else tr('有効を確認できません')))
     else:
-        lines.append('内蔵ブラウザ・オートメーション：機能一覧の読み込みが未完了です')
+        lines.append(tr('内蔵ブラウザ・オートメーション：機能一覧の読み込みが未完了です'))
     if snapshot.get('settingsRead') is False:
-        lines.append('設定の一部を読み込めていません。重要な作業の前にモデル・権限・作業先を確認してください。')
+        lines.append(tr('設定の一部を読み込めていません。重要な作業の前にモデル・権限・作業先を確認してください。'))
     elif snapshot.get('settingsFetching'):
-        lines.append('設定の読み込みが続いています。')
-    lines.append('ブラウザのページ表示と、オートメーションの次回実行はアプリで確認してください。')
+        lines.append(tr('設定の読み込みが続いています。'))
+    lines.append(tr('ブラウザのページ表示と、オートメーションの次回実行はアプリで確認してください。'))
     if snapshot['blank']:
-        next_step = '「まず復旧を試す」を押してください。' if mode == 'check' else '「画面を読み直す」を試してください。'
+        next_step = tr('「まず復旧を試す」を押してください。') if mode == 'check' else tr('「画面を読み直す」を試してください。')
         if mode == 'reload':
-            next_step = '画面の再読み込みでも戻っていません。この結果をCodex CLIに伝えてください。'
-        lines.append('\n次に：' + next_step)
+            next_step = tr('画面の再読み込みでも戻っていません。この結果をCodex CLIに伝えてください。')
+        lines.append(tr('\n次に：') + next_step)
     else:
-        lines.append('\n次に：Codexの画面を開いて確認してください。正常なら、このウィンドウは閉じて構いません。')
+        lines.append(tr('\n次に：Codexの画面を開いて確認してください。正常なら、このウィンドウは閉じて構いません。'))
     return '\n'.join(lines)
 
 
@@ -184,22 +185,22 @@ def run_operation(mode, report):
     record = {'time': datetime.datetime.now().astimezone().isoformat(), 'version': state['version'], 'mode': mode, 'actions': []}
     try:
         if mode == 'reload':
-            report('Codexの画面を再読み込みしています…')
+            report(tr('Codexの画面を再読み込みしています…'))
             connection.call('Page.reload', {'ignoreCache': True})
             time.sleep(5)
             connection.close()
             connection = Connection(main_page())
-        report('画面と機能の状態を確認しています…')
+        report(tr('画面と機能の状態を確認しています…'))
         first = connection.engine()
         record['before'] = first
         if mode != 'check':
-            report('止まった読み込みを確認しています…')
+            report(tr('止まった読み込みを確認しています…'))
             time.sleep(5)
             second = connection.engine()
             candidates = stable_candidates(first, second)
             for query in candidates:
-                label = {'features': '内蔵ブラウザ・オートメーション', 'config-read': '設定の読み込み', 'prepare': '画面の準備'}[query['kind']]
-                report(label + 'を復旧しています…')
+                label = {'features': tr('内蔵ブラウザ・オートメーション'), 'config-read': tr('設定の読み込み'), 'prepare': tr('画面の準備')}[query['kind']]
+                report(label + tr('を復旧しています…'))
                 result = connection.engine('repair', key=query['key'], queryId=query['queryId'], promiseId=query['promiseId'])
                 record['actions'].append(result)
                 time.sleep(0.3)
@@ -215,16 +216,16 @@ def run_operation(mode, report):
         try:
             save_record(record)
         except OSError:
-            report('診断ログを保存できませんでした。復旧処理の結果には影響しません。')
+            report(tr('診断ログを保存できませんでした。復旧処理の結果には影響しません。'))
 
 
 def prepare_connection(report):
     state = app_state()
     if state['listeners']:
         validate_listener(state)
-        report('診断接続は既にあります。アプリを終了せず復旧します。')
+        report(tr('診断接続は既にあります。アプリを終了せず復旧します。'))
         return run_operation('repair', report)
-    report('Codexを接続可能な状態で起動しています…')
+    report(tr('Codexを接続可能な状態で起動しています…'))
     # Resolve the executable and process IDs again immediately before termination.
     powershell(r'''
     $package=Get-AppxPackage OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1
@@ -252,16 +253,21 @@ def prepare_connection(report):
         except Exception:
             continue
     else:
-        raise RecoveryError('接続を確認できませんでした。Codexを手動で開いてください。この版では診断接続を利用できない可能性があります。')
+        raise RecoveryError(tr('接続を確認できませんでした。Codexを手動で開いてください。この版では診断接続を利用できない可能性があります。'))
     time.sleep(5)
     return run_operation('repair', report)
 
 
 def gui(smoke_test=False):
+    while _gui_once(smoke_test):
+        pass
+
+
+def _gui_once(smoke_test=False):
     import tkinter as tk
     from tkinter import messagebox, ttk
     app = tk.Tk()
-    app.title(f'Codex 復旧 — 非公式 v{APP_VERSION}')
+    app.title(tr('Codex 復旧 — 非公式 v') + APP_VERSION)
     icon = ROOT / 'assets' / 'recovery.ico'
     if icon.exists():
         app.iconbitmap(str(icon))
@@ -274,11 +280,19 @@ def gui(smoke_test=False):
     style.configure('TLabel', font=('Yu Gothic UI', 11))
     frame = ttk.Frame(app, padding=24)
     frame.pack(fill='both', expand=True)
-    ttk.Label(frame, text='Codex 復旧', font=('Yu Gothic UI', 20, 'bold')).pack(anchor='w')
-    ttk.Label(frame, text='症状に合う操作を選んでください。迷ったら、一番上から。', padding=(0, 6, 0, 16)).pack(anchor='w')
+    header = ttk.Frame(frame)
+    header.pack(fill='x')
+    ttk.Label(header, text=tr('Codex 復旧'), font=('Yu Gothic UI', 20, 'bold')).pack(side='left')
+    language = ttk.Combobox(header, values=('日本語', 'English'), state='readonly', width=10)
+    language.set('日本語' if get_language() == 'ja' else 'English')
+    language.pack(side='right')
+    ttk.Label(header, text='Language / 言語', font=('Yu Gothic UI', 9), padding=(0, 0, 8, 0)).pack(side='right')
+    ttk.Label(frame, text=tr('症状に合う操作を選んでください。迷ったら、一番上から。'), padding=(0, 6, 0, 16)).pack(anchor='w')
     messages = queue.Queue()
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     busy = False
+    restart = False
+    poll_timer = None
     buttons = []
     output = tk.Text(frame, height=9, wrap='word', font=('Yu Gothic UI', 10), relief='flat', padx=12, pady=12, background='#f3f4f6')
 
@@ -292,14 +306,15 @@ def gui(smoke_test=False):
         nonlocal busy
         if busy:
             return
-        if mode == 'prepare' and not messagebox.askyesno('Codexを開き直して復旧', '接続できない場合は、Codexアプリを終了して起動し直し、復旧を試します。\n実行中のタスクは中断されます。入力中の文章を控え、タスクの完了を確認してください。\n\n既に接続できる場合は、アプリを終了せず復旧を試します。\n\n続けますか？', parent=app):
+        if mode == 'prepare' and not messagebox.askyesno(tr('Codexを開き直して復旧'), tr('接続できない場合は、Codexアプリを終了して起動し直し、復旧を試します。\n実行中のタスクは中断されます。入力中の文章を控え、タスクの完了を確認してください。\n\n既に接続できる場合は、アプリを終了せず復旧を試します。\n\n続けますか？'), parent=app):
             return
-        if mode == 'reload' and not messagebox.askyesno('画面の再読み込み', 'Codexの画面を再読み込みします。\n入力中の未送信メッセージがあれば、先に控えてください。\n\n続けますか？', parent=app):
+        if mode == 'reload' and not messagebox.askyesno(tr('画面の再読み込み'), tr('Codexの画面を再読み込みします。\n入力中の未送信メッセージがあれば、先に控えてください。\n\n続けますか？'), parent=app):
             return
         busy = True
+        language.configure(state='disabled')
         for button in buttons:
             button.configure(state='disabled')
-        show('接続しています…')
+        show(tr('接続しています…'))
 
         def worker():
             report = lambda text: messages.put(('progress', text))
@@ -307,19 +322,19 @@ def gui(smoke_test=False):
                 result = prepare_connection(report) if mode == 'prepare' else run_operation(mode, report)
                 messages.put(('done', result))
             except Exception as error:
-                messages.put(('done', '処理を完了できませんでした。\n\n' + str(error)[:600] + '\n\n接続できない場合は「Codexを開き直して復旧」を使ってください。'))
+                messages.put(('done', tr('処理を完了できませんでした。\n\n') + str(error)[:600] + tr('\n\n接続できない場合は「Codexを開き直して復旧」を使ってください。')))
         pool.submit(worker)
 
     actions = [
-        ('まずはこちら', '黒画面／内蔵ブラウザ・オートメーションが使えない',
-         '止まった読み込みを取り直します。Codexを終了せずに試せます。',
-         'まず復旧を試す', 'repair'),
-        ('画面が戻らないとき', '上の復旧を試しても、黒画面・表示崩れが残る',
-         '画面全体を読み直してから復旧を試します。未送信の文章は先に控えてください。',
-         '画面を読み直す', 'reload'),
-        ('接続できないとき', '「接続できません」と出た／Codexが起動していない',
-         'Codexを開き直して、復旧を試します。\n終了が必要な場合、実行中のタスクは中断されます。',
-         'Codexを開き直して復旧', 'prepare'),
+        (tr('まずはこちら'), tr('黒画面／内蔵ブラウザ・オートメーションが使えない'),
+         tr('止まった読み込みを取り直します。Codexを終了せずに試せます。'),
+         tr('まず復旧を試す'), 'repair'),
+        (tr('画面が戻らないとき'), tr('上の復旧を試しても、黒画面・表示崩れが残る'),
+         tr('画面全体を読み直してから復旧を試します。未送信の文章は先に控えてください。'),
+         tr('画面を読み直す'), 'reload'),
+        (tr('接続できないとき'), tr('「接続できません」と出た／Codexが起動していない'),
+         tr('Codexを開き直して、復旧を試します。\n終了が必要な場合、実行中のタスクは中断されます。'),
+         tr('Codexを開き直して復旧'), 'prepare'),
     ]
     for tag, symptom, explanation, text, mode in actions:
         card = ttk.Frame(frame, padding=(12, 10), relief='solid', borderwidth=1)
@@ -333,16 +348,16 @@ def gui(smoke_test=False):
         buttons.append(button)
     result_header = ttk.Frame(frame)
     result_header.pack(fill='x', pady=(2, 6))
-    ttk.Label(result_header, text='結果・次にすること', font=('Yu Gothic UI', 11, 'bold')).pack(side='left')
-    check = ttk.Button(result_header, text='状態だけ調べる', command=lambda: start('check'))
+    ttk.Label(result_header, text=tr('結果・次にすること'), font=('Yu Gothic UI', 11, 'bold')).pack(side='left')
+    check = ttk.Button(result_header, text=tr('状態だけ調べる'), command=lambda: start('check'))
     check.pack(side='right')
     buttons.append(check)
     output.pack(fill='both', expand=True)
-    ttk.Label(frame, text='「状態だけ調べる」は確認のみ。復旧や再起動はしません。', foreground='#555555', font=('Yu Gothic UI', 10), padding=(0, 8, 0, 0)).pack(anchor='w')
-    show('まだ操作していません。\n\n黒画面でも、内蔵ブラウザ・オートメーションの停止でも、まず一番上の「まず復旧を試す」を押してください。\n\nここに結果と次の操作を表示します。')
+    ttk.Label(frame, text=tr('「状態だけ調べる」は確認のみ。復旧や再起動はしません。'), foreground='#555555', font=('Yu Gothic UI', 10), padding=(0, 8, 0, 0)).pack(anchor='w')
+    show(tr('まだ操作していません。\n\n黒画面でも、内蔵ブラウザ・オートメーションの停止でも、まず一番上の「まず復旧を試す」を押してください。\n\nここに結果と次の操作を表示します。'))
 
     def poll():
-        nonlocal busy
+        nonlocal busy, poll_timer
         while True:
             try:
                 event, text = messages.get_nowait()
@@ -351,21 +366,40 @@ def gui(smoke_test=False):
             show(text)
             if event == 'done':
                 busy = False
+                language.configure(state='readonly')
                 for button in buttons:
                     button.configure(state='normal')
-        app.after(100, poll)
+        poll_timer = app.after(100, poll)
 
     def close():
         if busy:
-            messagebox.showinfo('復旧処理中', '処理が完了するまで、このウィンドウを開いておいてください。', parent=app)
+            messagebox.showinfo(tr('復旧処理中'), tr('処理が完了するまで、このウィンドウを開いておいてください。'), parent=app)
             return
         pool.shutdown(wait=False)
+        if poll_timer:
+            app.after_cancel(poll_timer)
         app.destroy()
     app.protocol('WM_DELETE_WINDOW', close)
+    def change_language(_event):
+        nonlocal restart
+        selected = 'ja' if language.get() == '日本語' else 'en'
+        if busy or selected == get_language():
+            return
+        try:
+            save_language(selected)
+        except OSError:
+            messagebox.showerror(tr('Codex 復旧'), tr('言語を保存できませんでした。'), parent=app)
+            language.set('日本語' if get_language() == 'ja' else 'English')
+            return
+        set_language(selected)
+        restart = True
+        close()
+    language.bind('<<ComboboxSelected>>', change_language)
     poll()
     if smoke_test:
         app.after(800, close)
     app.mainloop()
+    return restart
 
 
 if __name__ == '__main__':
@@ -373,7 +407,9 @@ if __name__ == '__main__':
     parser.add_argument('--check', action='store_true', help='Read-only check; never restart or repair.')
     parser.add_argument('--gui-smoke', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--version', action='version', version=APP_VERSION)
+    parser.add_argument('--lang', choices=('ja', 'en'), help='Display language for this launch (does not overwrite the saved choice).')
     args = parser.parse_args()
+    set_language(resolve_language(args.lang))
     if sys.platform != 'win32':
         parser.exit(1, 'Codex App Recovery currently supports Windows only.\n')
     if args.check:
@@ -390,7 +426,7 @@ if __name__ == '__main__':
             raise OSError('Could not create recovery lock')
         try:
             if ctypes.get_last_error() == 183:
-                ctypes.windll.user32.MessageBoxW(None, '復旧ウィンドウは既に開いています。タスクバーから開いてください。', 'Codex 復旧', 0)
+                ctypes.windll.user32.MessageBoxW(None, tr('復旧ウィンドウは既に開いています。タスクバーから開いてください。'), tr('Codex 復旧'), 0)
             else:
                 gui(smoke_test=args.gui_smoke)
         finally:

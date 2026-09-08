@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import venv
+from i18n import tr, set_language, resolve_language
 
 ROOT = Path(__file__).resolve().parent
 
@@ -51,7 +52,9 @@ def create_shortcuts(pythonw, *, desktop=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--no-shortcuts', action='store_true', help='Only create the local Python environment.')
+    parser.add_argument('--lang', choices=('ja', 'en'), help='Setup dialog language.')
     args = parser.parse_args()
+    set_language(resolve_language(args.lang))
     if sys.platform != 'win32' or sys.version_info < (3, 10):
         parser.exit(1, 'Windows and Python 3.10+ are required.\n')
     import tkinter  # Fail before installation if Tcl/Tk was omitted.
@@ -69,8 +72,8 @@ def main():
         app = tkinter.Tk()
         app.withdraw()
         try:
-            if messagebox.askyesno('Codex App Recovery', 'スタートメニューにショートカットを追加しますか？', parent=app):
-                desktop = messagebox.askyesno('Codex App Recovery', 'デスクトップにもショートカットを追加しますか？', parent=app)
+            if messagebox.askyesno('Codex App Recovery', tr('スタートメニューにショートカットを追加しますか？'), parent=app):
+                desktop = messagebox.askyesno('Codex App Recovery', tr('デスクトップにもショートカットを追加しますか？'), parent=app)
                 for path in create_shortcuts(environment / 'Scripts' / 'pythonw.exe', desktop=desktop):
                     print('Created:', path)
         finally:
