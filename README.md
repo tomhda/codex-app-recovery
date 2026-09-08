@@ -49,6 +49,14 @@ The shared recovery button does **not** imply a shared cause: browser and automa
 
 ## Scope and limitations
 
+### The feature-list error can be followed by delayed recovery
+
+If **“Could not uniquely identify the feature-list client. Stopped without changes.”** appears, first wait about **30–60 seconds** and check the Codex window. A user reported on September 9, 2026 that the app recovered tens of seconds after this message.
+
+If the screen returns, use **Check status only** and verify the browser and automation behavior. If it does not return, try **Try recovery** once more. Avoid repeated restarts just because this message appeared.
+
+The message means that the tool could not identify a unique recovery target at that moment and stopped additional query repair. It does not establish that the app cannot recover, or undo an earlier reload/relaunch. The delay is an observation, not a proven cause or a guaranteed recovery time. v0.2.1 shows this guidance directly in the result area; it does not automatically wait or retry.
+
 This is not an OpenAI product or a permanent fix. It depends on private app internals and may stop working after updates. State inspection and GUI operation have been checked on **Windows 11, Codex 26.901.6511.0**. Other builds are unverified; macOS, Linux and non-MSIX app installations are unsupported.
 
 The original manual recovery restored a black window **from an external Codex CLI session**, through an existing diagnostic connection, without restarting the app. Manual feature-list recovery also restored browser/automation capabilities and an actual scheduled run. Recurrence in another app process was observed. The packaged utility has passed mock recovery tests and real-app inspection, but **recovery of a fresh real black-screen recurrence and its app-termination/relaunch path have not been end-to-end tested**.

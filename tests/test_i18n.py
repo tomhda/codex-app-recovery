@@ -39,6 +39,23 @@ class LanguageTests(unittest.TestCase):
         i18n.set_language('ja')
         self.assertEqual(i18n.tr('まず復旧を試す'), 'まず復旧を試す')
 
+    def test_feature_identification_error_suggests_waiting_in_both_languages(self):
+        message = '対象の機能一覧を一意に特定できません。変更せず停止しました。'
+        for language in ('ja', 'en'):
+            i18n.set_language(language)
+            text = recovery.describe_error(recovery.RecoveryError(i18n.tr(message)))
+            self.assertIn('30', text)
+            self.assertNotIn(i18n.tr('Codexを開き直して復旧'), text)
+            if language == 'en':
+                self.assertNotRegex(text, '[\u3040-\u9fff]')
+                self.assertIn('not a guaranteed', text)
+
+    def test_other_errors_keep_their_existing_guidance(self):
+        i18n.set_language('en')
+        text = recovery.describe_error(recovery.RecoveryError('Connection refused'))
+        self.assertIn('Connection refused', text)
+        self.assertNotIn('30', text)
+
     def test_preference_overrides_os_but_cli_override_wins(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'settings.json'

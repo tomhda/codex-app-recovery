@@ -19,7 +19,7 @@ from i18n import tr, get_language, set_language, resolve_language, save_language
 
 ROOT = Path(__file__).resolve().parent
 PORT = 9222
-APP_VERSION = '0.2.0'
+APP_VERSION = '0.2.1'
 ENGINE = (ROOT / 'engine.js').read_text(encoding='utf-8')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
@@ -178,6 +178,13 @@ def describe(snapshot, mode='check'):
     return '\n'.join(lines)
 
 
+def describe_error(error):
+    details = str(error)[:600]
+    if details.strip() == tr('対象の機能一覧を一意に特定できません。変更せず停止しました。'):
+        return tr('まだ復旧結果を確認できていません。\n\n') + details + tr('\n\nこの表示のあと、数十秒待つとアプリが回復した報告があります。まず30〜60秒ほど待って、Codexの画面を確認してください。回復時間を保証するものではありません。\n\n画面が戻ったら「状態だけ調べる」で確認してください。戻らなければ「まず復旧を試す」をもう一度押してください。連続して再起動する必要はありません。')
+    return tr('処理を完了できませんでした。\n\n') + details + tr('\n\n接続できない場合は「Codexを開き直して復旧」を使ってください。')
+
+
 def run_operation(mode, report):
     state = app_state()
     validate_listener(state)
@@ -322,7 +329,7 @@ def _gui_once(smoke_test=False):
                 result = prepare_connection(report) if mode == 'prepare' else run_operation(mode, report)
                 messages.put(('done', result))
             except Exception as error:
-                messages.put(('done', tr('処理を完了できませんでした。\n\n') + str(error)[:600] + tr('\n\n接続できない場合は「Codexを開き直して復旧」を使ってください。')))
+                messages.put(('done', describe_error(error)))
         pool.submit(worker)
 
     actions = [

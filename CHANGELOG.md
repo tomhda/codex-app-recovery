@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 — 2026-09-09
+
+- Explain that the feature-list identification error may be followed by delayed app recovery, based on a user report.
+- Show a 30–60 second wait-and-check suggestion for that error instead of generic restart guidance, in English and Japanese.
+- No automatic retry or changes to recovery behavior; the delay is not guaranteed.
+
 ## 0.2.0 — 2026-09-08
 
 - English and Japanese UI: actions, instructions, progress, confirmations, results and app-defined errors.

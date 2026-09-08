@@ -7,6 +7,8 @@ import sys
 import tempfile
 
 EN = {
+    'まだ復旧結果を確認できていません。\n\n': 'The recovery outcome has not been confirmed yet.\n\n',
+    '\n\nこの表示のあと、数十秒待つとアプリが回復した報告があります。まず30〜60秒ほど待って、Codexの画面を確認してください。回復時間を保証するものではありません。\n\n画面が戻ったら「状態だけ調べる」で確認してください。戻らなければ「まず復旧を試す」をもう一度押してください。連続して再起動する必要はありません。': '\n\nA user reported that the app recovered tens of seconds after this message. First wait about 30–60 seconds, then check the Codex window. This is not a guaranteed recovery time.\n\nIf the screen returns, select Check status only. Otherwise, try Try recovery once more. Do not repeatedly restart the app.',
     'Codex 復旧': 'Codex App Recovery',
     'Codex 復旧 — 非公式 v': 'Codex App Recovery — Unofficial v',
     '症状に合う操作を選んでください。迷ったら、一番上から。': 'Choose the action that matches your issue. Start with the first one.',
