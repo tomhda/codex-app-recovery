@@ -40,10 +40,16 @@ Keep the folder in its installed location. If you move it, remove the old shortc
 
 | Button (English / Japanese) | When to use it | Action |
 |---|---|---|
-| Try recovery / まず復旧を試す | Black screen or missing browser/automation capabilities | Cancel/refetch selected stalled reads without closing the app |
-| Reload screen / 画面を読み直す | The screen is still blank or broken | Confirm, reload the main page, then attempt recovery; save unsent text first |
+| Try recovery / まず復旧を試す | Black screen or missing browser/automation capabilities | With a connection, cancel/refetch selected stalled reads. Without one, ask once before reopening Codex with diagnostics and continue the selected action |
+| Reload screen / 画面を読み直す | The screen is still blank or broken | If connected, confirm once, reload the main page, then attempt recovery. Without one, ask once before reopening Codex and continue reload/recovery |
 | Reopen and recover / Codexを開き直して復旧 | The diagnostic connection is unavailable or the app is closed | Confirm, terminate the current app process tree if necessary, launch with loopback debugging, then attempt recovery |
 | Check status only / 状態だけ調べる | Inspect only | Read current state without recovery, reload or restart |
+
+After a reload, the utility re-discovers the current main page and retries transient local diagnostic connection failures for a bounded period. A normal Codex launch without the diagnostic port requires one confirmation before the utility reopens Codex and continues the selected recovery or reload action; it never restarts silently.
+
+Since v0.3.1, reopening uses Windows package activation instead of launching `ChatGPT.exe` directly, addressing the “process has no package identity” error seen after an app update. **Try recovery** also handles a persistent startup spinner: after repeated checks show an empty spinner screen with no editor and successfully loaded settings and local features, it reloads the main screen once. It does not force gateway/authentication readiness, clear data, or keep reloading. A visible or hidden editor prevents this automatic fallback; **Check status only** never reloads.
+
+When a project chat has a composer but the model picker, effort picker, or context-usage indicator is missing, the status snapshot reports the missing controls. Only a stalled config dependency for the same local workspace or an observed local model-list query with subscribers is eligible in this visible degraded state. General preparation reads are limited to a blank screen; a healthy visible screen is left unchanged.
 
 The shared recovery button does **not** imply a shared cause: browser and automation failures use a common feature-list query; blank-screen recovery additionally handles selected configuration and UI-preparation reads.
 
@@ -55,9 +61,9 @@ If **“Could not uniquely identify the feature-list client. Stopped without cha
 
 If the screen returns, use **Check status only** and verify the browser and automation behavior. If it does not return, try **Try recovery** once more. Avoid repeated restarts just because this message appeared.
 
-The message means that the tool could not identify a unique recovery target at that moment and stopped additional query repair. It does not establish that the app cannot recover, or undo an earlier reload/relaunch. The delay is an observation, not a proven cause or a guaranteed recovery time. v0.2.1 shows this guidance directly in the result area; it does not automatically wait or retry.
+The message means that the tool could not identify a unique recovery target at that moment and stopped additional query repair. It does not establish that the app cannot recover, or undo an earlier reload/relaunch. The delay is an observation, not a proven cause or a guaranteed recovery time. v0.3.0 shows this guidance directly in the result area; it does not automatically wait or retry.
 
-This is not an OpenAI product or a permanent fix. It depends on private app internals and may stop working after updates. State inspection and GUI operation have been checked on **Windows 11, Codex 26.901.6511.0**. Other builds are unverified; macOS, Linux and non-MSIX app installations are unsupported.
+This is not an OpenAI product or a permanent fix. It depends on private app internals and may stop working after updates. State inspection and GUI operation have been checked on **Windows 11, Codex 26.901.6511.0 and 26.924.2738.0**. On September 26, package activation followed by a main-screen reload manually restored the latter build, with user confirmation. The updated utility passed Windows tests, GUI smoke tests, and read-only live inspection; its full restart-and-repair flow has not been rerun against the now-healthy app. Other builds are unverified; macOS, Linux and non-MSIX app installations are unsupported.
 
 The original manual recovery restored a black window **from an external Codex CLI session**, through an existing diagnostic connection, without restarting the app. Manual feature-list recovery also restored browser/automation capabilities and an actual scheduled run. Recurrence in another app process was observed. The packaged utility has passed mock recovery tests and real-app inspection, but **recovery of a fresh real black-screen recurrence and its app-termination/relaunch path have not been end-to-end tested**.
 
@@ -83,8 +89,9 @@ No telemetry or diagnostic uploads are implemented. The app itself performs norm
 
 ```powershell
 py -3 setup_recovery.py --no-shortcuts
+npm ci --ignore-scripts
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-node tests/test_engine.cjs
+npm test
 .\.venv\Scripts\python.exe recovery.py --gui-smoke
 .\.venv\Scripts\python.exe recovery.py --check
 ```

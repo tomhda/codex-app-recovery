@@ -7,3 +7,4 @@ gui-preview.png
 dist/
 .env
 .env.*
+node_modules/

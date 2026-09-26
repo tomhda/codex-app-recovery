@@ -13,19 +13,28 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 import websocket
 from i18n import tr, get_language, set_language, resolve_language, save_language
 
 ROOT = Path(__file__).resolve().parent
 PORT = 9222
-APP_VERSION = '0.2.1'
+APP_VERSION = '0.3.1'
 ENGINE = (ROOT / 'engine.js').read_text(encoding='utf-8')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
 class RecoveryError(Exception):
-    pass
+    """User-safe failure carrying a machine-readable stage and error code."""
+    def __init__(self, message, code='transport_error', stage='operation'):
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+
+
+def _error(message, code, stage):
+    return RecoveryError(tr(message), code=code, stage=stage)
 
 
 def powershell(script: str, timeout=20):
@@ -40,7 +49,7 @@ def powershell(script: str, timeout=20):
     return json.loads(result.stdout.strip())
 
 
-def app_state():
+def app_state(timeout=20):
     return powershell(r'''
     $package=Get-AppxPackage OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1
     if(-not $package){throw 'Codex package not found'}
@@ -49,19 +58,27 @@ def app_state():
       Where-Object {$_.ExecutablePath -eq $exe} | ForEach-Object {
         @{id=$_.ProcessId;main=($_.CommandLine -notmatch '--type=');path=$_.ExecutablePath}
       })
-    $listeners=@(Get-NetTCPConnection -State Listen -LocalPort 9222 -ErrorAction SilentlyContinue |
-      ForEach-Object {@{pid=$_.OwningProcess;address=$_.LocalAddress}})
+    $listeners=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+      ForEach-Object {@{pid=$_.OwningProcess;port=$_.LocalPort;address=$_.LocalAddress}})
     @{exe=$exe;version=[string]$package.Version;processes=$processes;listeners=$listeners} | ConvertTo-Json -Depth 5 -Compress
-    ''')
+    ''', timeout=timeout)
 
 
 def validate_listener(state):
-    ids = {p['id'] for p in state['processes']}
+    ids = {p['id'] for p in state['processes'] if p.get('main', True)}
     listeners = state['listeners']
     if not listeners:
-        raise RecoveryError(tr('このツールからCodexに接続できません。下の「Codexを開き直して復旧」を押してください。'))
-    if any(p['pid'] not in ids or p['address'] not in ('127.0.0.1', '::1') for p in listeners):
-        raise RecoveryError(tr('診断ポートが別のアプリ、またはローカル以外の接続に使われています。変更せず停止しました。'))
+        raise _error('このツールからCodexに接続できません。通常起動のCodexには診断接続がない場合があります。下の「Codexを開き直して復旧」を押してください。', 'no_listener', 'connect')
+    for listener in listeners:
+        if listener.get('port', PORT) == PORT and (listener.get('pid') not in ids or listener.get('address') not in ('127.0.0.1', '::1')):
+            raise _error('診断ポートが別のアプリ、またはローカル以外の接続に使われています。変更せず停止しました。', 'unsafe_listener', 'validate_listener')
+    candidates = [p for p in listeners if p.get('pid') in ids and p.get('address') in ('127.0.0.1', '::1')]
+    if not candidates:
+        raise _error('このツールからCodexに接続できません。通常起動のCodexには診断接続がない場合があります。下の「Codexを開き直して復旧」を押してください。', 'no_listener', 'connect')
+    unique = {(p.get('pid'), p.get('port', PORT), p.get('address')): p for p in candidates}
+    if len(unique) != 1:
+        raise _error('Codexの診断接続先を一意に特定できません。変更せず停止しました。', 'target_ambiguous', 'validate_listener')
+    return next(iter(unique.values()))
 
 
 def redacted_record(value):
@@ -75,6 +92,8 @@ def redacted_record(value):
                 result['key'] = item[:2] + ['<argument>' for _ in item[2:]]
             elif key in ('error', 'reason'):
                 result[key] = '<details omitted>'
+            elif key in ('cwd', 'scopeCwd', 'workspace', 'workspacePath'):
+                result[key] = '<argument>'
             else:
                 result[key] = redacted_record(item)
         return result
@@ -88,81 +107,162 @@ def save_record(record):
     (log_dir / (stamp + '.json')).write_text(json.dumps(redacted_record(record), ensure_ascii=False, indent=2), encoding='utf-8')
 
 
-def main_page():
+def main_page(port=PORT, address='127.0.0.1', timeout=4):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(f'http://127.0.0.1:{PORT}/json', timeout=4) as response:
+    with opener.open(f'http://[{address}]:{port}/json' if ':' in address else f'http://{address}:{port}/json', timeout=timeout) as response:
         pages = json.load(response)
     # Selecting only the main app avoids the avatar overlay and embedded websites.
     eligible = []
     for page in pages:
         url = urllib.parse.urlparse(page.get('url', ''))
         if page.get('type') == 'page' and url.scheme == 'app' and url.netloc == '-' and url.path == '/index.html':
-            if 'avatar-overlay' not in urllib.parse.parse_qs(url.query).get('initialRoute', [''])[0]:
+            route = urllib.parse.parse_qs(url.query).get('initialRoute', [''])[0]
+            if not any(excluded in route.lower() for excluded in ('avatar-overlay', 'global-dictation', 'hotkey')):
                 eligible.append(page)
     if len(eligible) != 1:
-        raise RecoveryError(tr('Codexのメイン画面を一意に特定できません。変更せず停止しました。'))
+        raise _error('Codexのメイン画面を一意に特定できません。変更せず停止しました。', 'target_missing' if not eligible else 'target_ambiguous', 'target_discovery')
     return eligible[0]
 
 
+def _retryable_connection_error(error):
+    if isinstance(error, RecoveryError):
+        return error.code in ('target_missing', 'transport_error', 'engine_not_ready')
+    return isinstance(error, (OSError, urllib.error.URLError, websocket.WebSocketException))
+
+
+def _remaining(deadline_at, cap):
+    remaining = deadline_at - time.monotonic()
+    if remaining <= 0:
+        raise RecoveryError(tr('診断接続の期限を超過しました。'), code='transport_error', stage='deadline')
+    return min(cap, remaining)
+
+
+def connect_to_main(attempts=8, delay=0.6, deadline=20):
+    """Discover and connect to the current main page with one wall deadline."""
+    deadline_at = time.monotonic() + deadline
+    last = None
+    for attempt in range(attempts):
+        if time.monotonic() >= deadline_at:
+            break
+        try:
+            remaining = _remaining(deadline_at, 20)
+            state = app_state(timeout=remaining)
+            listener = validate_listener(state)
+            address = listener.get('address', '127.0.0.1')
+            port = listener.get('port', PORT)
+            page = main_page(port, address, timeout=_remaining(deadline_at, 4))
+            return Connection(page, port, timeout=_remaining(deadline_at, 18))
+        except RecoveryError as error:
+            last = error
+            if error.code in ('no_listener', 'unsafe_listener', 'target_ambiguous') or not _retryable_connection_error(error):
+                raise
+        except (OSError, urllib.error.URLError, websocket.WebSocketException) as error:
+            last = RecoveryError(tr('診断接続の操作に失敗しました。'), code='transport_error', stage='connect')
+        if attempt == attempts - 1 or time.monotonic() >= deadline_at:
+            break
+        time.sleep(min(delay * (attempt + 1), max(0.0, deadline_at - time.monotonic())))
+    if last:
+        raise last
+    raise RecoveryError(tr('診断接続の操作に失敗しました。'), code='transport_error', stage='connect')
+
+
 class Connection:
-    def __init__(self, page):
+    def __init__(self, page, port=PORT, timeout=18):
         url = page['webSocketDebuggerUrl']
         parsed = urllib.parse.urlparse(url)
-        if parsed.scheme != 'ws' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1') or parsed.port != PORT:
-            raise RecoveryError(tr('診断接続先がローカルではありません。'))
-        self.socket = websocket.create_connection(url, timeout=18, suppress_origin=True, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
+        if parsed.scheme != 'ws' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1') or parsed.port != port:
+            raise _error('診断接続先がローカルではありません。', 'unsafe_listener', 'connect')
+        self.socket = websocket.create_connection(url, timeout=timeout, suppress_origin=True, http_no_proxy=['127.0.0.1', 'localhost', '::1'])
         self.counter = 0
 
     def close(self):
         self.socket.close()
 
-    def call(self, method, params=None):
+    def call(self, method, params=None, timeout=20):
         self.counter += 1
+        deadline = time.monotonic() + timeout
+        self.socket.settimeout(max(0.05, timeout))
         self.socket.send(json.dumps({'id': self.counter, 'method': method, 'params': params or {}}))
-        deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             self.socket.settimeout(max(0.1, deadline - time.monotonic()))
             message = json.loads(self.socket.recv())
             if message.get('id') == self.counter:
                 if 'error' in message:
-                    raise RecoveryError(tr('診断接続の操作に失敗しました。'))
+                    raise RecoveryError(tr('診断接続の操作に失敗しました。'), code='transport_error', stage='cdp')
                 return message.get('result', {})
-        raise RecoveryError(tr('アプリからの応答がありません。'))
+        raise RecoveryError(tr('アプリからの応答がありません。'), code='transport_error', stage='cdp')
 
-    def engine(self, action='snapshot', **kwargs):
+    def engine(self, action='snapshot', timeout=20, **kwargs):
         request = json.dumps({'action': action, **kwargs}, ensure_ascii=True)
-        result = self.call('Runtime.evaluate', {'expression': f'{ENGINE}({request})', 'returnByValue': True, 'awaitPromise': True})
+        expression = f"(async()=>{{try{{return await ({ENGINE})({request})}}catch(error){{return {{__recoveryError:{{code:typeof error?.code==='string'?error.code:'engine_error'}}}}}}}})()"
+        result = self.call('Runtime.evaluate', {'expression': expression, 'returnByValue': True, 'awaitPromise': True}, timeout=timeout)
         if 'exceptionDetails' in result:
-            details = result['exceptionDetails']
-            description = details.get('exception', {}).get('description', details.get('text', ''))
-            raise RecoveryError(tr(description.split('\n')[0][:400].removeprefix('Error: ')))
+            raise RecoveryError(tr('アプリの状態を読み取れませんでした。'), code='transport_error', stage='engine')
         value = result.get('result', {}).get('value')
+        if isinstance(value, dict) and value.get('__recoveryError'):
+            code = value['__recoveryError'].get('code')
+            messages = {'engine_not_ready': 'アプリの画面準備が完了していません。', 'ambiguous_client': '対象を一意に特定できません。'}
+            raise RecoveryError(tr(messages.get(code, 'アプリの状態を読み取れませんでした。')), code=code or 'engine_error', stage='engine')
         if not isinstance(value, dict):
-            raise RecoveryError(tr('アプリの状態を読み取れませんでした。'))
+            raise RecoveryError(tr('アプリの状態を読み取れませんでした。'), code='engine_error', stage='engine')
         return value
 
 
 def stable_candidates(first, second):
-    earlier = {json.dumps(q['key'], ensure_ascii=True): q for q in first['queries']}
+    earlier = {json.dumps(q['key'], ensure_ascii=True): q for q in first.get('queries', [])}
     result = []
     for query in second['queries']:
         previous = earlier.get(json.dumps(query['key'], ensure_ascii=True))
         if previous and all(query.get(k) == previous.get(k) for k in ('queryId', 'promiseId', 'status', 'fetch', 'updated')):
-            if query['status'] == 'pending' and query['fetch'] == 'fetching' and query['updated'] == 0:
-                if query['kind'] == 'features' or second['blank']:
+            if (query.get('eligible') is True and query.get('status') == 'pending' and
+                    query.get('fetch') == 'fetching' and query.get('updated') == 0):
+                if query.get('kind') in ('features', 'models', 'config-parent') or second.get('blank') or second.get('ui', {}).get('degraded', False):
                     result.append(query)
-    order = {'features': 0, 'config-read': 1, 'prepare': 2}
+    order = {'features': 0, 'models': 1, 'config-read': 2, 'config-parent': 3, 'prepare': 4}
     return sorted(result, key=lambda q: order[q['kind']])
+
+
+def stable_startup_spinner(*snapshots):
+    """Reload only a repeatedly observed empty startup spinner with a ready backend."""
+    if len(snapshots) < 2:
+        return False
+    document_ids = {item.get('ui', {}).get('documentId') for item in snapshots}
+    return (None not in document_ids and len(document_ids) == 1 and
+            all(item.get('blank') and item.get('ui', {}).get('startupSpinner') is True and
+                item.get('settingsRead') is True and
+                item.get('features', {}).get('status') == 'success' and
+                item.get('features', {}).get('fetch') == 'idle' for item in snapshots))
 
 
 def describe(snapshot, mode='check'):
     lines = [tr('画面：') + (tr('本文・操作ボタンが見つかりません') if snapshot['blank'] else tr('画面の内容を確認できました（実際の表示も確認してください）'))]
     features = snapshot['features']
+    if snapshot.get('ui', {}).get('startupSpinner'):
+        lines.append(tr('起動時の読み込み表示が続いています。'))
     if features['status'] == 'success' and features['fetch'] == 'idle':
         lines.append(tr('内蔵ブラウザ：') + (tr('有効') if features['browser'] is True else tr('有効を確認できません')))
         lines.append(tr('オートメーション：') + (tr('有効') if features['automation'] is True else tr('有効を確認できません')))
     else:
         lines.append(tr('内蔵ブラウザ・オートメーション：機能一覧の読み込みが未完了です'))
+    ui = snapshot.get('ui') or {}
+    if ui.get('chat'):
+        for label, key in (('モデル：', 'modelPicker'), ('effort：', 'effortPicker'), ('コンテキスト使用量：', 'contextUsage')):
+            value = ui.get(key)
+            if value is True:
+                state = '表示'
+            elif value is False:
+                state = '未表示'
+            else:
+                state = '不明'
+            lines.append(tr(label) + tr(state))
+        if ui.get('modelPicker') is False or ui.get('effortPicker') is False:
+            lines.append(tr('新規チャットのモデル・effort表示が一部欠けています。'))
+        if ui.get('contextState') == 'no_data':
+            lines.append(tr('コンテキスト使用量は未取得です。未送信チャットでは通常の状態の場合があります。'))
+        elif ui.get('contextState') == 'hidden':
+            lines.append(tr('コンテキスト使用量の表示は現在隠れています。未復旧の可能性があります。'))
+        elif ui.get('contextState') == 'unknown':
+            lines.append(tr('コンテキスト使用量の表示状態を判断できません。'))
     if snapshot.get('settingsRead') is False:
         lines.append(tr('設定の一部を読み込めていません。重要な作業の前にモデル・権限・作業先を確認してください。'))
     elif snapshot.get('settingsFetching'):
@@ -173,6 +273,11 @@ def describe(snapshot, mode='check'):
         if mode == 'reload':
             next_step = tr('画面の再読み込みでも戻っていません。この結果をCodex CLIに伝えてください。')
         lines.append(tr('\n次に：') + next_step)
+    elif ui.get('modelPicker') is False or ui.get('effortPicker') is False:
+        next_step = (tr('「まず復旧を試す」を押してください。') if mode == 'check' else
+                     tr('「画面を読み直す」を試してください。') if mode == 'repair' else
+                     tr('画面の再読み込みでも戻っていません。この結果をCodex CLIに伝えてください。'))
+        lines.append(tr('\n次に：') + next_step)
     else:
         lines.append(tr('\n次に：Codexの画面を開いて確認してください。正常なら、このウィンドウは閉じて構いません。'))
     return '\n'.join(lines)
@@ -180,58 +285,123 @@ def describe(snapshot, mode='check'):
 
 def describe_error(error):
     details = str(error)[:600]
-    if details.strip() == tr('対象の機能一覧を一意に特定できません。変更せず停止しました。'):
+    if getattr(error, 'code', None) in ('ambiguous_client', 'target_ambiguous') or details.strip() == tr('対象の機能一覧を一意に特定できません。変更せず停止しました。'):
         return tr('まだ復旧結果を確認できていません。\n\n') + details + tr('\n\nこの表示のあと、数十秒待つとアプリが回復した報告があります。まず30〜60秒ほど待って、Codexの画面を確認してください。回復時間を保証するものではありません。\n\n画面が戻ったら「状態だけ調べる」で確認してください。戻らなければ「まず復旧を試す」をもう一度押してください。連続して再起動する必要はありません。')
     return tr('処理を完了できませんでした。\n\n') + details + tr('\n\n接続できない場合は「Codexを開き直して復旧」を使ってください。')
 
 
+def _engine_snapshot(connection, attempts=8, delay=0.8, deadline=20):
+    started = time.monotonic()
+    last = None
+    for attempt in range(attempts):
+        try:
+            return connection.engine(timeout=_remaining(started + deadline, 20))
+        except RecoveryError as error:
+            if error.code == 'transport_error':
+                raise
+            last = error
+            if error.code != 'engine_not_ready':
+                raise
+        except (OSError, websocket.WebSocketException) as error:
+            raise RecoveryError(tr('診断接続の操作に失敗しました。'), code='transport_error', stage='engine') from error
+        elapsed = time.monotonic() - started
+        if elapsed >= deadline or attempt == attempts - 1:
+            raise RecoveryError(tr('アプリの画面準備が完了していません。'), code='engine_not_ready', stage='engine') from last
+        time.sleep(min(delay * (attempt + 1), max(0.0, deadline - elapsed)))
+    raise RecoveryError(tr('アプリの画面準備が完了していません。'), code='engine_not_ready', stage='engine') from last
+
+
 def run_operation(mode, report):
-    state = app_state()
-    validate_listener(state)
-    connection = Connection(main_page())
-    record = {'time': datetime.datetime.now().astimezone().isoformat(), 'version': state['version'], 'mode': mode, 'actions': []}
+    record = {'time': datetime.datetime.now().astimezone().isoformat(), 'version': None, 'mode': mode, 'actions': []}
+    connection = None
     try:
+        state = app_state()
+        record['version'] = state.get('version')
+        connection = connect_to_main()
+        def snapshot():
+            nonlocal connection
+            try:
+                return _engine_snapshot(connection)
+            except RecoveryError as error:
+                if error.code not in ('engine_not_ready', 'transport_error'):
+                    raise
+                old = connection
+                try:
+                    connection = connect_to_main(attempts=4, delay=0.5, deadline=8)
+                finally:
+                    try:
+                        old.close()
+                    except Exception:
+                        pass
+                return _engine_snapshot(connection, attempts=4, delay=0.5, deadline=8)
         if mode == 'reload':
             report(tr('Codexの画面を再読み込みしています…'))
             connection.call('Page.reload', {'ignoreCache': True})
-            time.sleep(5)
+            time.sleep(2)
             connection.close()
-            connection = Connection(main_page())
+            connection = connect_to_main(attempts=8, delay=0.8)
         report(tr('画面と機能の状態を確認しています…'))
-        first = connection.engine()
+        first = snapshot()
         record['before'] = first
         if mode != 'check':
             report(tr('止まった読み込みを確認しています…'))
             time.sleep(5)
-            second = connection.engine()
+            second = snapshot()
             candidates = stable_candidates(first, second)
             for query in candidates:
-                label = {'features': tr('内蔵ブラウザ・オートメーション'), 'config-read': tr('設定の読み込み'), 'prepare': tr('画面の準備')}[query['kind']]
+                label = {'features': tr('内蔵ブラウザ・オートメーション'), 'config-read': tr('設定の読み込み'), 'config-parent': tr('設定の読み込み'), 'models': tr('モデル一覧'), 'prepare': tr('画面の準備')}[query['kind']]
                 report(label + tr('を復旧しています…'))
                 result = connection.engine('repair', key=query['key'], queryId=query['queryId'], promiseId=query['promiseId'])
                 record['actions'].append(result)
                 time.sleep(0.3)
             time.sleep(2)
-        after = connection.engine()
+        after = snapshot()
+        if mode in ('repair', 'prepare') and stable_startup_spinner(first, second, after):
+            report(tr('起動時の読み込み停止を確認しました。画面を一度だけ読み直しています…'))
+            # Record the attempt before sending; never resend a possibly delivered reload.
+            record['actions'].append({'action': 'startup_spinner_reload'})
+            connection.call('Page.reload', {'ignoreCache': True})
+            connection.close()
+            connection = connect_to_main(attempts=8, delay=0.8)
+            # Observe startup for a bounded period. Do not send a second reload.
+            for attempt in range(8):
+                time.sleep(2)
+                after = snapshot()
+                if not after.get('blank'):
+                    break
         record['after'] = after
         return describe(after, mode)
+    except RecoveryError as error:
+        record['errorCode'] = error.code
+        record['stage'] = error.stage
+        raise
     except Exception as error:
+        record['errorCode'] = 'transport_error'
+        record['stage'] = 'operation'
         record['error'] = str(error)[:500]
         raise
     finally:
-        connection.close()
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                record.setdefault('closeError', True)
         try:
             save_record(record)
         except OSError:
             report(tr('診断ログを保存できませんでした。復旧処理の結果には影響しません。'))
 
 
-def prepare_connection(report):
+def prepare_connection(report, requested_mode='repair'):
     state = app_state()
-    if state['listeners']:
+    try:
         validate_listener(state)
+    except RecoveryError as error:
+        if error.code != 'no_listener':
+            raise
+    else:
         report(tr('診断接続は既にあります。アプリを終了せず復旧します。'))
-        return run_operation('repair', report)
+        return run_operation(requested_mode, report)
     report(tr('Codexを接続可能な状態で起動しています…'))
     # Resolve the executable and process IDs again immediately before termination.
     powershell(r'''
@@ -239,6 +409,32 @@ def prepare_connection(report):
     if(-not $package){throw 'Codex package not found'}
     $exe=Join-Path $package.InstallLocation 'app\ChatGPT.exe'
     if(-not (Test-Path -LiteralPath $exe)){throw 'Executable missing'}
+    # Resolve the app by executable, not manifest order. Compile before closing Codex.
+    $manifest=Get-AppxPackageManifest $package
+    $apps=@($manifest.Package.Applications.Application | Where-Object { ($_.Executable -replace '/', '\') -ieq 'app\ChatGPT.exe' })
+    if($apps.Count -ne 1){throw 'Codex package application is ambiguous'}
+    $aumid=$package.PackageFamilyName + '!' + $apps[0].Id
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+class ApplicationActivationManager {}
+[ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IApplicationActivationManager {
+    [PreserveSig] int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appId,
+        [MarshalAs(UnmanagedType.LPWStr)] string arguments, uint options, out uint processId);
+}
+public static class CodexPackageActivation {
+    public static uint Start(string id) {
+        var manager = (IApplicationActivationManager)new ApplicationActivationManager();
+        uint pid;
+        int result = manager.ActivateApplication(id,
+            "--remote-debugging-address=127.0.0.1 --remote-debugging-port=9222", 0, out pid);
+        Marshal.ThrowExceptionForHR(result);
+        return pid;
+    }
+}
+'@
     if(@(Get-NetTCPConnection -State Listen -LocalPort 9222 -ErrorAction SilentlyContinue).Count){throw 'Port is already in use'}
     $targets=@(Get-CimInstance Win32_Process -Filter "Name='ChatGPT.exe'" | Where-Object {$_.ExecutablePath -eq $exe -and $_.CommandLine -notmatch '--type='})
     foreach($target in $targets){
@@ -249,8 +445,8 @@ def prepare_connection(report):
     }
     Start-Sleep -Seconds 2
     if(@(Get-CimInstance Win32_Process -Filter "Name='ChatGPT.exe'" | Where-Object {$_.ExecutablePath -eq $exe}).Count){throw 'App processes remain'}
-    Start-Process -FilePath $exe -ArgumentList '--remote-debugging-address=127.0.0.1','--remote-debugging-port=9222'
-    @{started=$true} | ConvertTo-Json -Compress
+    $activatedPid=[CodexPackageActivation]::Start($aumid)
+    @{started=$true;pid=$activatedPid} | ConvertTo-Json -Compress
     ''', timeout=30)
     for _ in range(30):
         time.sleep(2)
@@ -262,7 +458,7 @@ def prepare_connection(report):
     else:
         raise RecoveryError(tr('接続を確認できませんでした。Codexを手動で開いてください。この版では診断接続を利用できない可能性があります。'))
     time.sleep(5)
-    return run_operation('repair', report)
+    return run_operation(requested_mode, report)
 
 
 def gui(smoke_test=False):
@@ -315,8 +511,6 @@ def _gui_once(smoke_test=False):
             return
         if mode == 'prepare' and not messagebox.askyesno(tr('Codexを開き直して復旧'), tr('接続できない場合は、Codexアプリを終了して起動し直し、復旧を試します。\n実行中のタスクは中断されます。入力中の文章を控え、タスクの完了を確認してください。\n\n既に接続できる場合は、アプリを終了せず復旧を試します。\n\n続けますか？'), parent=app):
             return
-        if mode == 'reload' and not messagebox.askyesno(tr('画面の再読み込み'), tr('Codexの画面を再読み込みします。\n入力中の未送信メッセージがあれば、先に控えてください。\n\n続けますか？'), parent=app):
-            return
         busy = True
         language.configure(state='disabled')
         for button in buttons:
@@ -326,15 +520,25 @@ def _gui_once(smoke_test=False):
         def worker():
             report = lambda text: messages.put(('progress', text))
             try:
-                result = prepare_connection(report) if mode == 'prepare' else run_operation(mode, report)
+                if mode == 'reload':
+                    probe = connect_to_main()
+                    probe.close()
+                    messages.put(('reload_required', mode))
+                    return
+                result = prepare_connection(report, requested_mode=mode) if mode == 'prepare' else run_operation(mode, report)
                 messages.put(('done', result))
+            except RecoveryError as error:
+                if error.code == 'no_listener' and mode in ('repair', 'reload'):
+                    messages.put(('connection_required', mode))
+                else:
+                    messages.put(('done', describe_error(error)))
             except Exception as error:
                 messages.put(('done', describe_error(error)))
         pool.submit(worker)
 
     actions = [
-        (tr('まずはこちら'), tr('黒画面／内蔵ブラウザ・オートメーションが使えない'),
-         tr('止まった読み込みを取り直します。Codexを終了せずに試せます。'),
+        (tr('まずはこちら'), tr('黒画面／起動時のグルグル／ブラウザ・自動化が使えない'),
+         tr('止まった読み込みを再取得します。入力欄のない起動スピナーが続く場合は、画面を一度だけ読み直します。再起動が必要な場合は確認します。'),
          tr('まず復旧を試す'), 'repair'),
         (tr('画面が戻らないとき'), tr('上の復旧を試しても、黒画面・表示崩れが残る'),
          tr('画面全体を読み直してから復旧を試します。未送信の文章は先に控えてください。'),
@@ -363,6 +567,20 @@ def _gui_once(smoke_test=False):
     ttk.Label(frame, text=tr('「状態だけ調べる」は確認のみ。復旧や再起動はしません。'), foreground='#555555', font=('Yu Gothic UI', 10), padding=(0, 8, 0, 0)).pack(anchor='w')
     show(tr('まだ操作していません。\n\n黒画面でも、内蔵ブラウザ・オートメーションの停止でも、まず一番上の「まず復旧を試す」を押してください。\n\nここに結果と次の操作を表示します。'))
 
+    def _prepare_after_consent(requested_mode):
+        try:
+            result = prepare_connection(lambda text: messages.put(('progress', text)), requested_mode=requested_mode)
+            messages.put(('done', result))
+        except Exception as error:
+            messages.put(('done', describe_error(error)))
+
+    def _run_after_confirmation(requested_mode):
+        try:
+            result = run_operation(requested_mode, lambda text: messages.put(('progress', text)))
+            messages.put(('done', result))
+        except Exception as error:
+            messages.put(('done', describe_error(error)))
+
     def poll():
         nonlocal busy, poll_timer
         while True:
@@ -370,7 +588,28 @@ def _gui_once(smoke_test=False):
                 event, text = messages.get_nowait()
             except queue.Empty:
                 break
-            show(text)
+            if event == 'reload_required':
+                if messagebox.askyesno(tr('画面の再読み込み'), tr('Codexの画面を再読み込みします。\n入力中の未送信メッセージがあれば、先に控えてください。\n\n続けますか？'), parent=app):
+                    pool.submit(lambda: _run_after_confirmation('reload'))
+                else:
+                    busy = False
+                    language.configure(state='readonly')
+                    for button in buttons:
+                        button.configure(state='normal')
+                    show(tr('再読み込みを拒否しました。選んだ処理は実行していません。'))
+            elif event == 'connection_required':
+                requested_mode = text
+                if messagebox.askyesno(tr('診断接続が必要です'), tr('この起動では接続準備が必要です。続けるとCodexを終了して診断接続付きで開き直し、選んだ処理を続行します。\n\n実行中のタスクは中断されます。続けますか？'), parent=app):
+                    show(tr('Codexを接続可能な状態で起動しています…'))
+                    pool.submit(lambda: _prepare_after_consent(requested_mode))
+                else:
+                    busy = False
+                    language.configure(state='readonly')
+                    for button in buttons:
+                        button.configure(state='normal')
+                    show(tr('接続準備を拒否しました。選んだ処理は実行していません。'))
+            else:
+                show(text)
             if event == 'done':
                 busy = False
                 language.configure(state='readonly')

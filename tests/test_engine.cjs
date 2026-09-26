@@ -31,6 +31,11 @@ async function repair(f,q) {
   return f.run({action:'repair',...current});
 }
 
+assert.match(source, /data-composer-layout/);
+assert.match(source, /contextState/);
+assert.match(source, /engine_not_ready/);
+assert.match(source, /invalidateQueries/);
+
 (async()=>{
   let f=fixture();
   await f.run({action:'snapshot'});
@@ -39,10 +44,11 @@ async function repair(f,q) {
   assert.deepEqual(f.calls.map(x=>x[0]),['cancel','refetch']);
   assert.equal(f.feature.state.status,'success');
   f=fixture();
-  await repair(f,f.config);
-  assert.deepEqual(f.calls.map(x=>x[0]),['cancel'],'config cancellation must not start a second overlapping fetch');
+  const configResult = await repair(f,f.config);
+  assert.equal(configResult.action,'cancelled','black-screen config read remains in the recovery allowlist');
+  assert.deepEqual(f.calls.map(x=>x[0]),['cancel']);
   f=fixture(false);
-  assert.equal((await repair(f,f.config)).reason,'screen_visible');
+  assert.equal((await repair(f,f.config)).reason,'ineligible');
   assert.equal(f.calls.length,0);
   f=fixture();
   const before=(await f.run({action:'snapshot'})).queries[0];
@@ -57,7 +63,8 @@ async function repair(f,q) {
   await assert.rejects(f.run({action:'repair',key:f.unrelated.queryKey}),/復旧対象外/);
   assert.equal(f.calls.length,0);
   f=fixture();
-  await repair(f,f.prepare);
+  const prepareResult = await repair(f,f.prepare);
+  assert.equal(prepareResult.action,'cancelled_refetched');
   assert.deepEqual(f.calls.map(x=>x[0]),['cancel','refetch']);
   assert.equal(f.unrelated.state.status,'pending');
   console.log('PASS: 8 recovery selection and mutation-boundary scenarios');
