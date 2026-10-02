@@ -179,5 +179,37 @@ class GuardEventTests(unittest.TestCase):
         self.assertEqual(guard_events.recent(), [])
 
 
+class GuardContractTests(unittest.TestCase):
+    def test_python_calls_only_existing_guard_methods(self):
+        import re
+        root = Path(__file__).resolve().parent.parent
+        guard = (root / 'guard.js').read_text(encoding='utf-8')
+        api = guard[guard.index('const api = {'):]
+        for name in ('codex_control.py', 'guard_daemon.py'):
+            for method in set(re.findall(r'__codexSelfHealGuard\.(\w+)\(', (root / name).read_text(encoding='utf-8'))):
+                self.assertRegex(api, r'\b%s\b' % method, '%s calls missing guard method %s' % (name, method))
+
+
+@unittest.skipUnless(__import__('os').name == 'nt', 'Windows file locking')
+class DaemonLockTests(unittest.TestCase):
+    def test_lock_held_on_non_empty_file_is_seen(self):
+        import msvcrt
+        with tempfile.TemporaryDirectory() as tmp:
+            guard_dir = Path(tmp) / 'guard'
+            guard_dir.mkdir()
+            lock = guard_dir / 'daemon.lock'
+            lock.write_bytes(b'12345')
+            with patch.object(control, 'DATA', Path(tmp)):
+                self.assertFalse(control.daemon_running())
+                with open(lock, 'a+b') as holder:
+                    holder.seek(0)
+                    msvcrt.locking(holder.fileno(), msvcrt.LK_NBLCK, 1)
+                    try:
+                        self.assertTrue(control.daemon_running())
+                    finally:
+                        holder.seek(0)
+                        msvcrt.locking(holder.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 if __name__ == '__main__':
     unittest.main()

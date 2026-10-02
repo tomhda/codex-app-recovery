@@ -10,7 +10,7 @@ import codex_control as control
 import guard_events
 from i18n import tr, get_language, set_language, resolve_language, save_language
 
-APP_VERSION = '1.0.0'
+APP_VERSION = '1.0.1'
 REFRESH_MS = 5000
 
 
@@ -366,7 +366,7 @@ def main() -> int:
     mutex = kernel.CreateMutexW(None, False, 'Local\\CodexAppRecoveryTool')
     if not mutex:
         raise OSError('Could not create recovery lock')
-    if ctypes.get_last_error() == 183:
+    if ctypes.get_last_error() == 183 and not args.gui_smoke:
         ctypes.windll.user32.MessageBoxW(None, tr('復旧ウィンドウは既に開いています。タスクバーから開いてください。'), tr('Codex 復旧'), 0)
         return 0
     gui(smoke_test=args.gui_smoke)

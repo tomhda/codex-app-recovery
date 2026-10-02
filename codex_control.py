@@ -218,7 +218,8 @@ def daemon_running() -> bool:
         return False
     import msvcrt
     try:
-        with open(lock, 'a+') as handle:
+        with open(lock, 'a+b') as handle:
+            handle.seek(0)  # append mode starts at EOF; the daemon locks byte 0
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
         return False
@@ -348,7 +349,7 @@ def checkup(report=lambda _: None, confirm_reload=lambda: False) -> dict:
             page.evaluate(GUARD_SOURCE)
             summary['guardInstalled'] = True
         report('checking')
-        page.evaluate('window.__codexSelfHealGuard && (window.__codexSelfHealGuard.patchResume(), window.__codexSelfHealGuard.tick())')
+        page.evaluate('window.__codexSelfHealGuard && (window.__codexSelfHealGuard.corrections(), window.__codexSelfHealGuard.tick())')
     time.sleep(4)
     with Page(main_page()) as page:
         status = page_status(page)

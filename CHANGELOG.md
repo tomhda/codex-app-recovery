@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1 — 2026-10-02
+
+- Enable the Resume and startup corrections on Codex 26.928.4866.0 (internal version 26.928.40906). Both app bugs are unchanged in that version, and the parts the corrections use were confirmed there. The first cold start after the update stopped on the logo again and opened once the initialization snapshot was requested.
+- Fix **Check now** failing with `evaluate_failed`: it called a guard method that no longer exists.
+- Fix the self-heal guard showing as "Starting" while the helper runs: the helper check locked the end of the lock file instead of byte 0.
+- Guard 2.0.1, so a running window takes the new version list after deploying.
+- Add tests for the guard methods the Python side calls and for detecting the helper's lock on a non-empty lock file.
+- `--gui-smoke` no longer stops at the "already open" message when the recovery window is open.
+
 ## 1.0.0 — 2026-10-02
 
 - Replace the symptom-by-symptom recovery buttons with one status window: Codex, self-heal guard and window state refresh every 5 seconds, and one main button (Start Codex / Restart with guard / Check now). Add **Reload window** and a list of recent automatic fixes.
