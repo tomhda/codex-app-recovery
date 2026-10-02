@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1 — 2026-10-02
+
+- Enable the Resume and startup corrections on Codex 26.930.2377.0 (internal version 26.930.21537, app-server 0.159.0-alpha.12.1). The Resume check now goes through `streamState`, but it still answers "streaming" while the chat is open, and the chunked sender still waits for each acknowledgement without a time limit.
+- Work in progress: label command-line Codex runs (`codex exec`) with their first instruction, show the first instruction for chats that have no name yet, and leave out Codex's own helper runs such as approval reviews. Turn start and end are found in the whole record (read once, then only new bytes), so large records with images also show the start time.
+
 ## 1.2.0 — 2026-10-02
 
 - Add **Work in progress** to Codex Recovery (and `--status`). It reads the conversation records Codex writes under `%USERPROFILE%\.codex\sessions`, not the window, so it shows whether work is still going on while the window shows nothing new: chat name, start time, time since the last record and the current step (thinking, running a command, reading the result, writing the reply). Finished and stopped work stays listed for 30 minutes. Running work with no new record for 5 minutes is flagged as possibly stopped.

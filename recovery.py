@@ -11,7 +11,7 @@ import guard_events
 import work_monitor
 from i18n import tr, get_language, set_language, resolve_language, save_language
 
-APP_VERSION = '1.2.0'
+APP_VERSION = '1.2.1'
 REFRESH_MS = 5000
 
 

@@ -15,14 +15,14 @@
 // - Startup: a cold start can miss the one-off app-server "initialized"
 //   message; the guard asks the host to re-send the initialization snapshot.
 (() => {
-  const VERSION = '2.1.0';
+  const VERSION = '2.1.1';
   const existing = window.__codexSelfHealGuard;
   if (existing && existing.version === VERSION) return existing.status();
   if (existing && typeof existing.dispose === 'function') existing.dispose();
 
   // App versions whose internals the two corrections were verified against.
-  // Values of electronBridge.getSentryInitOptions().appVersion (package 26.928.3736.0 reports 26.928.31416, 26.928.4866.0 reports 26.928.40906).
-  const VERIFIED_APP_VERSIONS = ['26.928.31416', '26.928.40906'];
+  // Values of electronBridge.getSentryInitOptions().appVersion (package 26.928.3736.0 reports 26.928.31416, 26.928.4866.0 reports 26.928.40906, 26.930.2377.0 reports 26.930.21537).
+  const VERIFIED_APP_VERSIONS = ['26.928.31416', '26.928.40906', '26.930.21537'];
 
   const cfg = {
     tickMs: 5000,

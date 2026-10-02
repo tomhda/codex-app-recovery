@@ -78,9 +78,23 @@ class WorkMonitorTests(unittest.TestCase):
     def test_turn_start_beyond_the_short_tail_is_found(self):
         big = [(12, 'event_msg', {'type': 'task_started'})] + [(5, 'response_item', {'type': 'message', 'role': 'user', 'content': 'x' * 1000})] * 50
         self.record(big)
+        work_monitor._marks.clear()
         with patch.object(work_monitor, 'TAIL_BYTES', 4000):
             item = work_monitor.snapshot(self.now)[0]
         self.assertIsNotNone(item['started'])
+
+    def test_markers_read_only_appended_bytes(self):
+        path = self.record([(12, 'event_msg', {'type': 'task_started'})])
+        work_monitor._marks.clear()
+        self.assertEqual(work_monitor.markers(path)['state'], 'running')
+        first = work_monitor._marks[str(path)]['pos']
+        with open(path, 'a', encoding='utf-8') as handle:
+            handle.write(json.dumps({'timestamp': stamp(self.now), 'type': 'event_msg', 'payload': {'type': 'task_complete'}}) + '\n')
+            handle.write('{"timestamp": "partial')
+        mark = work_monitor.markers(path)
+        self.assertEqual(mark['state'], 'done')
+        self.assertGreater(mark['pos'], first)
+        self.assertEqual(path.read_bytes()[mark['pos']:], b'{"timestamp": "partial')
 
     def test_broken_lines_are_skipped(self):
         path = self.record([(2, 'event_msg', {'type': 'task_started'})])

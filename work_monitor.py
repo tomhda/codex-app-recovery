@@ -16,7 +16,7 @@ CODEX_HOME = Path.home() / '.codex'
 SESSIONS = CODEX_HOME / 'sessions'
 INDEX = CODEX_HOME / 'session_index.jsonl'
 TAIL_BYTES = 2 * 1024 * 1024
-LONG_TAIL_BYTES = 32 * 1024 * 1024   # when the current turn began before the short tail
+FIRST_SCAN_BYTES = 256 * 1024 * 1024  # turn start/end markers: scanned once, then only appended bytes
 LOOKBACK_SECONDS = 6 * 3600     # records older than this are not read
 SHOW_ENDED_SECONDS = 30 * 60    # finished or stopped work stays listed this long
 QUIET_SECONDS = 5 * 60          # running work with no record for this long is flagged
@@ -60,6 +60,80 @@ def titles() -> dict[str, str]:
         if isinstance(record.get('id'), str) and isinstance(record.get('thread_name'), str):
             names[record['id']] = record['thread_name']
     return names
+
+
+HEAD_BYTES = 512 * 1024
+_marks: dict[str, dict] = {}
+_MARKER_KINDS = (b'"task_started"', b'"task_complete"', b'"turn_aborted"')
+
+
+def markers(path: Path) -> dict:
+    """Latest turn start/end in the whole record; only new bytes are read after the first call."""
+    key = str(path)
+    mark = _marks.setdefault(key, {'pos': 0, 'state': None, 'started': None, 'ended': None})
+    with open(path, 'rb') as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        if size < mark['pos']:
+            mark.update(pos=0, state=None, started=None, ended=None)
+        start = max(mark['pos'], size - FIRST_SCAN_BYTES)
+        handle.seek(start)
+        data = handle.read(size - start)
+    end = data.rfind(b'\n') + 1
+    for line in data[:end].splitlines():
+        if not any(kind in line for kind in _MARKER_KINDS):
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        payload = record.get('payload') if isinstance(record.get('payload'), dict) else {}
+        when = _time(record.get('timestamp'))
+        if record.get('type') != 'event_msg' or when is None:
+            continue
+        if payload.get('type') == 'task_started':
+            mark.update(state='running', started=when, ended=None)
+        elif payload.get('type') == 'task_complete':
+            mark.update(state='done', ended=when)
+        elif payload.get('type') == 'turn_aborted':
+            mark.update(state='stopped', ended=when)
+    mark['pos'] = start + end
+    return mark
+
+
+_heads: dict[str, dict] = {}
+
+
+def head_info(path: Path) -> dict:
+    """Who started the record and its first instruction (cached once known)."""
+    key = str(path)
+    if key in _heads:
+        return _heads[key]
+    info = {'kind': 'chat', 'prompt': None}
+    with open(path, 'rb') as handle:
+        data = handle.read(HEAD_BYTES)
+    for line in data.splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        payload = record.get('payload') if isinstance(record, dict) and isinstance(record.get('payload'), dict) else {}
+        if record.get('type') == 'session_meta':
+            source = payload.get('source')
+            if payload.get('thread_source') == 'guardian_review' or (isinstance(source, dict) and 'subagent' in source):
+                info['kind'] = 'subagent'
+            elif source == 'exec':
+                info['kind'] = 'exec'
+        item = payload.get('item') if isinstance(payload.get('item'), dict) else {}
+        if record.get('type') == 'event_msg' and payload.get('type') == 'item_completed' and item.get('type') == 'UserMessage':
+            texts = [part.get('text') for part in item.get('content') or [] if isinstance(part, dict) and isinstance(part.get('text'), str)]
+            lines = [text.strip().lstrip('#').strip() for text in '\n'.join(texts).splitlines()]
+            first = next((text for text in lines if text), '')
+            info['prompt'] = first[:40] + ('…' if len(first) > 40 else '') if first else None
+            break
+    if info['prompt'] or info['kind'] != 'chat' or len(data) >= HEAD_BYTES:
+        _heads[key] = info
+    return info
 
 
 def read_thread(path: Path, size: int = TAIL_BYTES) -> dict:
@@ -111,16 +185,26 @@ def snapshot(now: datetime.datetime | None = None, limit: int = 5) -> list[dict]
                 if now.timestamp() - path.stat().st_mtime > LOOKBACK_SECONDS:
                     continue
                 turn = read_thread(path)
-                if turn['state'] == 'running' and turn['started'] is None and path.stat().st_size > TAIL_BYTES:
-                    turn = read_thread(path, LONG_TAIL_BYTES)
+                if turn['state'] == 'running' and turn['started'] is None:
+                    marks = markers(path)
+                    if marks['state'] == 'running':
+                        turn['started'] = marks['started']
+                    elif marks['state'] is not None:
+                        turn.update(state=marks['state'], ended=marks['ended'])
             except OSError:
                 continue
             if turn['last'] is None:
                 continue
+            head = head_info(path)
+            if head['kind'] == 'subagent':
+                continue  # Codex's own helpers (for example approval reviews) belong to another chat
             if turn['state'] != 'running' and (now - (turn['ended'] or turn['last'])).total_seconds() > SHOW_ENDED_SECONDS:
                 continue
             thread_id = path.stem[-36:]
-            items.append({**turn, 'id': thread_id, 'title': names.get(thread_id) or tr('（名前のない会話）')})
+            title = names.get(thread_id) or head['prompt'] or tr('（名前のない会話）')
+            if head['kind'] == 'exec':
+                title = tr('［コマンドラインのCodex］{title}').format(title=head['prompt'] or tr('（指示を読めません）'))
+            items.append({**turn, 'id': thread_id, 'title': title})
     items.sort(key=lambda item: (item['state'] != 'running', -(item['last'].timestamp())))
     return items[:limit]
 

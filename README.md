@@ -8,7 +8,7 @@ An unofficial tool that corrects **stuck sends, unusable message queues, and sta
 
 ![Status and repair window](docs/screenshot-en.png)
 
-## Problems handled (seen on Codex 26.928.3736.0 and 26.928.4866.0 / app-server 0.159.2)
+## Problems handled (seen on Codex 26.928.3736.0, 26.928.4866.0 and 26.930.2377.0)
 
 | Symptom | Cause | What this tool does |
 |---|---|---|
@@ -77,7 +77,7 @@ Guard activity is written to `%LOCALAPPDATA%\CodexAppRecovery\guard\guard-YYYYMM
 ## How it works
 
 - `guard.js` runs in the Codex windows (main, avatar, detached) and watches the app's own send and receive events (`codex-message-from-view` and `message`). It re-sends only read requests confirmed in this app version (an exact list of names). App-server requests without a reply after 45 s and internal requests after 30 s are re-sent as they were originally sent, at most three times; giving up returns no error. A reply is handed only to the same request on the same host.
-- The Resume and startup corrections run only on the verified app version (internal versions 26.928.31416 and 26.928.40906). The Resume correction does not run twice for a chat whose resume is still in progress, and stopping the guard restores the original code.
+- The Resume and startup corrections run only on the verified app version (internal versions 26.928.31416, 26.928.40906 and 26.930.21537). The Resume correction does not run twice for a chat whose resume is still in progress, and stopping the guard restores the original code.
 - `guard_daemon.py` is the background helper. It loads the guard into each window, from the first script after a reload. When the Codex log shows a reply was routed to a live window after the request started while the window is still waiting, it re-reads after 5 s. It reloads the main window only when replies Codex routed stop reaching it (see the table above; drafts in the message box are kept by Codex) and never restarts Codex. It exits two minutes after Codex closes.
 - `codex_control.py` starts, quits, reloads and checks Codex. Quitting uses Codex's own quit request. Forcing Codex to close when it does not respond is confirmed separately from the restart, and only the processes present at that confirmation are closed.
 

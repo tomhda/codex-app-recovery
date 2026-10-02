@@ -135,6 +135,8 @@ EN = {
     'Codexの画面ではなく、会話の記録から読んでいます': 'Read from the conversation records, not from the Codex window',
     '会話の記録を読めませんでした。': 'Could not read the conversation records.',
     '（名前のない会話）': '(Untitled chat)',
+    '［コマンドラインのCodex］{title}': '[Codex on the command line] {title}',
+    '（指示を読めません）': '(instruction not readable)',
     '{n}秒': '{n}s',
     '{n}分': '{n} min',
     '{h}時間{m}分': '{h} h {m} min',
