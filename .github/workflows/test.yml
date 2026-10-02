@@ -22,7 +22,7 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest discover -s tests -v
       - run: node tests/test_guard.mjs
-      - run: python -m py_compile recovery.py codex_control.py guard_events.py guard_daemon.py chat_client.py chat_ui.py setup_recovery.py i18n.py scripts/deploy_local.py
+      - run: python -m py_compile recovery.py codex_control.py guard_events.py work_monitor.py guard_daemon.py chat_client.py chat_ui.py setup_recovery.py i18n.py scripts/deploy_local.py
       - if: runner.os == 'Windows'
         run: |
           python recovery.py --gui-smoke --lang en

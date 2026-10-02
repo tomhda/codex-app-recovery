@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0 — 2026-10-02
+
+- Add **Work in progress** to Codex Recovery (and `--status`). It reads the conversation records Codex writes under `%USERPROFILE%\.codex\sessions`, not the window, so it shows whether work is still going on while the window shows nothing new: chat name, start time, time since the last record and the current step (thinking, running a command, reading the result, writing the reply). Finished and stopped work stays listed for 30 minutes. Running work with no new record for 5 minutes is flagged as possibly stopped.
+
 ## 1.1.0 — 2026-10-02
 
 - Handle a stalled channel from Codex to the window. Codex sends messages over 4 MB in parts and sends the next part only after the window acknowledges the current one; every other message to that window waits behind it, with no time limit. After a start on 26.928.4866.0 one acknowledgement never arrived, so no reply reached the window (sends spun, chats showed "thinking" after the work had finished), while Codex logged each reply as routed.

@@ -8,9 +8,10 @@ import sys
 
 import codex_control as control
 import guard_events
+import work_monitor
 from i18n import tr, get_language, set_language, resolve_language, save_language
 
-APP_VERSION = '1.1.0'
+APP_VERSION = '1.2.0'
 REFRESH_MS = 5000
 
 
@@ -95,8 +96,8 @@ def _gui_once(smoke_test=False, smoke_ms=1500):
 
     app = tk.Tk()
     app.title(tr('Codex 復旧') + ' v' + APP_VERSION)
-    app.geometry('760x720')
-    app.minsize(700, 640)
+    app.geometry('760x820')
+    app.minsize(700, 720)
     style = ttk.Style()
     style.theme_use('vista')
     style.configure('TButton', font=('Yu Gothic UI', 11), padding=(12, 8))
@@ -134,11 +135,18 @@ def _gui_once(smoke_test=False, smoke_ms=1500):
     reload_button = ttk.Button(actions, text=tr('画面を読み直す'), state='disabled')
     reload_button.pack(side='right')
 
-    output = tk.Text(frame, height=6, wrap='word', font=('Yu Gothic UI', 10), relief='flat', padx=12, pady=10, background='#f3f4f6')
+    output = tk.Text(frame, height=4, wrap='word', font=('Yu Gothic UI', 10), relief='flat', padx=12, pady=10, background='#f3f4f6')
     output.pack(fill='x', pady=(12, 12))
 
+    work_header = ttk.Frame(frame)
+    work_header.pack(fill='x')
+    ttk.Label(work_header, text=tr('作業の進み具合'), font=('Yu Gothic UI', 11, 'bold')).pack(side='left')
+    ttk.Label(work_header, text=tr('Codexの画面ではなく、会話の記録から読んでいます'), foreground='#555555', font=('Yu Gothic UI', 9)).pack(side='left', padx=(10, 0))
+    work = tk.Text(frame, height=6, wrap='word', font=('Yu Gothic UI', 10), relief='flat', padx=12, pady=8, background='#f3f4f6')
+    work.pack(fill='x', pady=(6, 12))
+
     ttk.Label(frame, text=tr('最近の自動修復'), font=('Yu Gothic UI', 11, 'bold')).pack(anchor='w')
-    history = tk.Text(frame, height=9, wrap='word', font=('Yu Gothic UI', 10), relief='flat', padx=12, pady=8, background='#fafafa')
+    history = tk.Text(frame, height=6, wrap='word', font=('Yu Gothic UI', 10), relief='flat', padx=12, pady=8, background='#fafafa')
     history.pack(fill='both', expand=True, pady=(6, 8))
     ttk.Label(frame, text=tr('普段はスタートメニューの「Codex（ガード付き）」から起動してください。通常のChatGPTアイコンから起動するとガードは働きません。'),
               foreground='#555555', font=('Yu Gothic UI', 9), wraplength=680).pack(anchor='w')
@@ -176,7 +184,11 @@ def _gui_once(smoke_test=False, smoke_ms=1500):
                 today = guard_events.count_today()
             except Exception:
                 events, today = [], 0
-            messages.put(('overview', (described, events, today)))
+            try:
+                progress = work_monitor.summary_text()
+            except Exception:
+                progress = tr('会話の記録を読めませんでした。')
+            messages.put(('overview', (described, events, today, progress)))
         pool.submit(work)
 
     def run(kind):
@@ -229,7 +241,8 @@ def _gui_once(smoke_test=False, smoke_ms=1500):
                 break
             if event == 'overview':
                 state['refreshing'] = False
-                described, events, today = payload
+                described, events, today, progress = payload
+                set_text(work, progress)
                 for key in ('codex', 'guard', 'screen'):
                     rows[key].set(described[key])
                 rows['today'].set(tr('{count}件').format(count=today))
@@ -353,6 +366,7 @@ def main() -> int:
             if args.status:
                 described = describe_overview(control.overview())
                 print(f"Codex: {described['codex']}\n{tr('自己修復ガード')}: {described['guard']}\n{tr('画面')}: {described['screen']}")
+                print(f"\n{tr('作業の進み具合')}\n{work_monitor.summary_text()}\n\n{tr('最近の自動修復')}")
                 for when, text in guard_events.recent(limit=10):
                     print(f'{when:%m/%d %H:%M}  {text}')
             else:

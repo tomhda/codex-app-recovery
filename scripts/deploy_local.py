@@ -18,7 +18,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-RUNTIME = ['recovery.py', 'codex_control.py', 'guard_events.py', 'guard.js', 'guard_daemon.py', 'i18n.py', 'chat_client.py', 'chat_ui.py']
+RUNTIME = ['recovery.py', 'codex_control.py', 'guard_events.py', 'work_monitor.py', 'guard.js', 'guard_daemon.py', 'i18n.py', 'chat_client.py', 'chat_ui.py']
 OLD_SHORTCUTS = ['Codex（自己修復ガード付き）.lnk', 'Codex App Recovery.lnk']
 
 

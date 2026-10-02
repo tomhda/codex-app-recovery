@@ -55,6 +55,7 @@ The guard does not run when Codex is opened from the regular ChatGPT icon.
 | Automatic fixes today | How many times the guard corrected something today |
 | Main button | One of Start Codex, Restart with guard, or Check now, depending on the state |
 | Reload window | Reloads the Codex main window (unsent text in the message box may be lost) |
+| Work in progress | What Codex is doing, read from its conversation records rather than the window: chat, start time, time since the last record, current step. Shows whether work continues while the window shows nothing new |
 | Recent automatic fixes | What the guard did |
 
 **Check now** makes sure the background helper and the in-window guard are running, and runs the startup correction. Only if the window is still on the startup screen does it offer to reload the window once.
