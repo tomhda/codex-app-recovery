@@ -10,7 +10,9 @@ function setup({ loopback = false } = {}) {
   const win = new EventTarget();
   const sent = [];
   const appSeen = [];
+  const acks = [];
   win.electronBridge = {
+    acknowledgeChunkedMessage: (transferId, sequence) => { acks.push([transferId, sequence]); },
     sendMessageFromView: async (m) => {
       sent.push(m);
       // Some bridges re-announce what they send; the guard must not chase its own ids.
@@ -38,7 +40,7 @@ function setup({ loopback = false } = {}) {
     fetchResponse(requestId, body) { win.dispatchEvent(new MessageEvent('message', { data: { type: 'fetch-response', responseType: 'success', requestId, status: 200, bodyJsonString: JSON.stringify(body) } })); },
     raw(data) { win.dispatchEvent(new MessageEvent('message', { data })); },
   };
-  return { win, guard, sent, appSeen, app, host, advance(ms) { now += ms; guard.tick(); } };
+  return { win, guard, sent, appSeen, acks, app, host, advance(ms) { now += ms; guard.tick(); } };
 }
 
 function test(name, fn, options) {
@@ -314,6 +316,51 @@ test('init snapshot request works with the resume fix turned off, throttled', ({
   manager.requestClient.appServerVersion = '0.159.2';
   advance(11_000); guard.corrections();
   assert.equal(sent.length, 2, 'stops once initialized');
+});
+
+test('a chunk part followed by silence is acknowledged again, once', ({ acks, host, advance }) => {
+  host.raw({ marker: M, kind: 'start', transferId: 'X', sequence: 0 });
+  advance(3_000);
+  assert.equal(acks.length, 0, 'not before the stall threshold');
+  advance(2_000);
+  assert.deepEqual(acks, [['X', 0]]);
+  advance(10_000);
+  assert.equal(acks.length, 1, 'only once per part');
+});
+
+test('a flowing or finished transfer is never acknowledged by the guard', ({ acks, host, advance }) => {
+  host.raw({ marker: M, kind: 'start', transferId: 'Y', sequence: 0 });
+  advance(3_000);
+  host.raw({ marker: M, kind: 'chunk', transferId: 'Y', sequence: 1, tokens: [] });
+  advance(3_000);
+  host.raw({ marker: M, kind: 'end', transferId: 'Y', sequence: 2 });
+  advance(20_000);
+  assert.equal(acks.length, 0);
+});
+
+test('a later message after the part means the channel moved on', ({ acks, host, advance }) => {
+  host.raw({ marker: M, kind: 'start', transferId: 'Z', sequence: 0 });
+  advance(1_000);
+  host.mcpResponse('unrelated', {});
+  advance(10_000);
+  assert.equal(acks.length, 0);
+});
+
+test('stalled needs a confirmed lost reply and silence', ({ guard, app, host, advance }) => {
+  app.request('q-1', 'thread/queue/list', { threadId: 'T' });
+  host.mcpResponse('other', {});
+  advance(16_000);
+  assert.equal(guard.status().stalled, false, 'silence alone is idle, not stalled');
+  guard.confirmLost('q-1');
+  assert.equal(guard.status().stalled, true);
+  host.mcpResponse('other-2', {});
+  assert.equal(guard.status().stalled, false, 'anything arriving clears it');
+});
+
+test('typing time is reported for the companion', ({ win, guard }) => {
+  assert.equal(guard.status().sinceInputMs, null);
+  win.dispatchEvent(new Event('keydown'));
+  assert.equal(guard.status().sinceInputMs, 0);
 });
 
 console.log(failures ? `${failures} failed` : 'all passed');

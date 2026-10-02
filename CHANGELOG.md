@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 — 2026-10-02
+
+- Handle a stalled channel from Codex to the window. Codex sends messages over 4 MB in parts and sends the next part only after the window acknowledges the current one; every other message to that window waits behind it, with no time limit. After a start on 26.928.4866.0 one acknowledgement never arrived, so no reply reached the window (sends spun, chats showed "thinking" after the work had finished), while Codex logged each reply as routed.
+  - Guard 2.1.0 acknowledges the last part again when nothing has arrived for 4 seconds after it. Codex ignores an acknowledgement that does not match the part it is waiting for, so this is harmless when the window is fine.
+  - When replies Codex routed are still waiting and nothing has reached the window for 15 seconds, the helper reloads the main window (at most 3 times in 30 minutes, 60 seconds apart, and only when nobody typed in the last 10 seconds; Codex keeps message-box drafts across reloads). Otherwise it records the stall, and the status shows "Replies are not arriving".
+
 ## 1.0.1 — 2026-10-02
 
 - Enable the Resume and startup corrections on Codex 26.928.4866.0 (internal version 26.928.40906). Both app bugs are unchanged in that version, and the parts the corrections use were confirmed there. The first cold start after the update stopped on the logo again and opened once the initialization snapshot was requested.

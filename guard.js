@@ -15,7 +15,7 @@
 // - Startup: a cold start can miss the one-off app-server "initialized"
 //   message; the guard asks the host to re-send the initialization snapshot.
 (() => {
-  const VERSION = '2.0.1';
+  const VERSION = '2.1.0';
   const existing = window.__codexSelfHealGuard;
   if (existing && existing.version === VERSION) return existing.status();
   if (existing && typeof existing.dispose === 'function') existing.dispose();
@@ -39,6 +39,12 @@
     resumeFix: true,
     initSnapshotFix: true,
     initSnapshotAfterMs: 8000,
+    // The host sends the next part of a chunked message only after the window
+    // acknowledges the current one, and queues every other message behind it.
+    chunkStallMs: 4000,
+    // Nothing arrived for this long while a reply the host already routed is
+    // still waiting: the host-to-window channel is stalled.
+    stallMs: 15000,
     now: () => Date.now(),
   };
 
@@ -69,6 +75,10 @@
   const counters = { replayed: 0, recovered: 0, lateDropped: 0, confirmedLost: 0 };
   let generation = 0;
   let disposed = false;
+  let lastIncomingAt = cfg.now();
+  let lastInputAt = 0;
+  let lastPart = null;            // last chunk part seen: { transferId, sequence, kind, at }
+  const reacked = new Set();      // transferId:sequence acknowledged by the guard
 
   function report(event) {
     const record = { t: cfg.now(), ...event };
@@ -263,7 +273,12 @@
     if (disposed || event.__codexGuardSynthetic) return;
     const d = event.data;
     if (!d || typeof d !== 'object') return;
-    if (d.marker === CHUNK_MARKER && typeof d.transferId === 'string') { onChunk(d); return; }
+    lastIncomingAt = cfg.now();
+    if (d.marker === CHUNK_MARKER && typeof d.transferId === 'string') {
+      if (typeof d.sequence === 'number') lastPart = { transferId: d.transferId, sequence: d.sequence, kind: d.kind, at: lastIncomingAt };
+      onChunk(d);
+      return;
+    }
     if (d.type === 'mcp-response' && d.message && typeof d.message.id === 'string') settle('mcp', d.message.id, d, event);
     else if (d.type === 'fetch-response' && typeof d.requestId === 'string') settle('fetch', d.requestId, d, event);
     else if (d.type === 'mcp-request-delivery' && d.update && d.update.type === 'failed') {
@@ -293,9 +308,33 @@
     try { bridgeSend(message); } catch { replays.delete(newId); report({ kind: 'replay-failed', bus, name: entry.name }); }
   }
 
+  // A part was delivered and nothing has arrived since: the window's
+  // acknowledgement never reached the host (observed after startup, which then
+  // blocks every reply). Acknowledging the same part again is harmless: the
+  // host ignores an acknowledgement that does not match its current part.
+  function reackStalledTransfer(now) {
+    const part = lastPart;
+    if (!part || part.kind === 'end' || lastIncomingAt > part.at || now - part.at < cfg.chunkStallMs) return;
+    const key = part.transferId + ':' + part.sequence;
+    if (reacked.has(key)) return;
+    reacked.add(key);
+    if (reacked.size > 100) reacked.delete(reacked.values().next().value);
+    const bridge = window.electronBridge;
+    if (!bridge || typeof bridge.acknowledgeChunkedMessage !== 'function') return;
+    try { bridge.acknowledgeChunkedMessage(part.transferId, part.sequence); } catch { return; }
+    report({ kind: 'transfer-reack', sequence: part.sequence, waitedMs: now - part.at });
+  }
+
+  function stalled(now) {
+    if (now - lastIncomingAt < cfg.stallMs) return false;
+    for (const entry of pending.mcp.values()) if (entry.confirmedLost && now - entry.startedAt >= cfg.stallMs) return true;
+    return false;
+  }
+
   function tick() {
     if (disposed) return;
     const now = cfg.now();
+    reackStalledTransfer(now);
     for (const [id, until] of recovered) if (until < now) recovered.delete(id);
     for (const [id, r] of replays) if (now - r.createdAt > cfg.replayTtlMs) replays.delete(id);
     for (const [id, t] of transfers) if (now - t.startedAt > cfg.transferTtlMs) transfers.delete(id);
@@ -437,6 +476,9 @@
 
   window.addEventListener('codex-message-from-view', onOutgoing);
   window.addEventListener('message', onIncoming, { capture: true });
+  const onInput = () => { lastInputAt = cfg.now(); };
+  window.addEventListener('keydown', onInput, { capture: true });
+  window.addEventListener('input', onInput, { capture: true });
   const timer = setInterval(() => {
     try { tick(); } catch (error) { report({ kind: 'tick-error', message: String(error && error.message).slice(0, 200) }); }
     try { corrections(); } catch (error) { report({ kind: 'corrections-error', message: String(error && error.message).slice(0, 200) }); }
@@ -478,6 +520,9 @@
         oldestMcp: oldest(pending.mcp),
         oldestFetch: oldest(pending.fetch),
         counters: { ...counters },
+        silentMs: now - lastIncomingAt,
+        stalled: stalled(now),
+        sinceInputMs: lastInputAt ? now - lastInputAt : null,
         recent: ring.slice(-20),
       };
     },
@@ -486,6 +531,8 @@
       clearInterval(timer);
       window.removeEventListener('codex-message-from-view', onOutgoing);
       window.removeEventListener('message', onIncoming, { capture: true });
+      window.removeEventListener('keydown', onInput, { capture: true });
+      window.removeEventListener('input', onInput, { capture: true });
       for (const patch of resumePatches) if (patch.queue.resume === patch.wrapper) patch.queue.resume = patch.original;
       resumePatches.length = 0;
       if (window.__codexSelfHealGuard === api) delete window.__codexSelfHealGuard;

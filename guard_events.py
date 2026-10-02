@@ -64,6 +64,12 @@ def describe(event: dict) -> str | None:
         return tr('起動時の初期化情報を取り直しました（ロゴのまま止まる不具合の補正）。')
     if kind == 'startup-blank-reload':
         return tr('起動画面のまま止まっていたため、画面を読み直しました。')
+    if kind == 'transfer-reack':
+        return tr('画面への大きなデータの受け渡しが途中で止まっていたため、再開させました。')
+    if kind == 'channel-stall-reload':
+        return tr('Codexからの応答が画面に届かなくなっていたため、画面を読み直しました。')
+    if kind == 'channel-stall':
+        return tr('Codexからの応答が画面に届いていません。入力中の文章を控えてから「画面を読み直す」を押してください。')
     if kind == 'startup-blank-persist':
         return tr('起動画面のまま2分以上たっています。「今すぐ点検」を押してください。')
     return None

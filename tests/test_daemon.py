@@ -54,5 +54,60 @@ class LockTests(unittest.TestCase):
             again.close()
 
 
+class StallReloadTests(unittest.TestCase):
+    def session(self, main=True):
+        session = guard_daemon.Session.__new__(guard_daemon.Session)
+        session.target_id = 'T' * 16
+        session.is_main = main
+        session.candidates = {}
+        session.stall_reloads = []
+        session.stall_logged_at = 0.0
+        session.calls = []
+        session.call = lambda method, params=None, timeout=15: session.calls.append(method)
+        return session
+
+    def setUp(self):
+        patcher = patch.object(guard_daemon, 'log')
+        self.log = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.clock = [1000.0]
+        clock = patch.object(guard_daemon.time, 'monotonic', side_effect=lambda: self.clock[0])
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def test_stalled_main_window_is_reloaded(self):
+        session = self.session()
+        self.assertTrue(session.handle_stall({'stalled': True, 'sinceInputMs': None, 'silentMs': 20000}))
+        self.assertEqual(session.calls, ['Page.reload'])
+
+    def test_not_stalled_does_nothing(self):
+        session = self.session()
+        self.assertFalse(session.handle_stall({'stalled': False}))
+        self.assertEqual(session.calls, [])
+
+    def test_recent_typing_or_other_windows_only_log(self):
+        typing = self.session()
+        self.assertFalse(typing.handle_stall({'stalled': True, 'sinceInputMs': 2000}))
+        other = self.session(main=False)
+        self.assertFalse(other.handle_stall({'stalled': True, 'sinceInputMs': None}))
+        self.assertEqual(typing.calls + other.calls, [])
+        kinds = [c.args[0]['kind'] for c in self.log.call_args_list]
+        self.assertEqual(kinds, ['channel-stall', 'channel-stall'])
+
+    def test_reloads_are_spaced_and_bounded(self):
+        session = self.session()
+        status = {'stalled': True, 'sinceInputMs': None}
+        self.assertTrue(session.handle_stall(status))
+        self.clock[0] += 30
+        self.assertFalse(session.handle_stall(status), 'too soon')
+        for _ in range(2):
+            self.clock[0] += 61
+            self.assertTrue(session.handle_stall(status))
+        self.clock[0] += 61
+        self.assertFalse(session.handle_stall(status), 'at most three per half hour')
+        self.clock[0] += 1800
+        self.assertTrue(session.handle_stall(status))
+
+
 if __name__ == '__main__':
     unittest.main()

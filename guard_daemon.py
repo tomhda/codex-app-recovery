@@ -34,6 +34,14 @@ GIVE_UP_WITHOUT_PORT_SECONDS = 600
 CONFIRM_WINDOW_SECONDS = 240
 LOG_TAIL_BYTES = 6 * 1024 * 1024
 STARTUP_BLANK_LOG_SECONDS = 120
+# A stalled host-to-window channel never recovers by itself; reloading the
+# window makes the host send the blocked message again. Drafts in the message
+# box are kept by the app across reloads; the guard still waits until nobody
+# has typed for a while.
+STALL_QUIET_INPUT_MS = 10000
+STALL_RELOAD_GAP_SECONDS = 60
+STALL_RELOADS_PER_WINDOW = 3
+STALL_RELOAD_WINDOW_SECONDS = 1800
 _ROUTED = re.compile(rb'^(\S+) .*\bresponse_routed\b.*\brequestId=(\S+) .*\btargetDestroyed=false\b')
 
 
@@ -114,6 +122,8 @@ class Session:
         parsed = self.url.split('?', 1)
         self.is_main = parsed[0] == 'app://-/index.html' and 'initialRoute' not in (parsed[1] if len(parsed) > 1 else '')
         self.blank_logged_for = None
+        self.stall_reloads: list[float] = []
+        self.stall_logged_at = 0.0
 
     def call(self, method, params=None, timeout=15):
         with self.lock:
@@ -169,6 +179,8 @@ class Session:
         for event in drained.get('events', []):
             event = {k: v for k, v in event.items() if k not in ('t', 'startedAt')}
             log({'target': self.target_id[:8], **event})
+        if self.handle_stall(drained.get('status') or {}):
+            return
         for event in drained.get('events', []):
             if event.get('kind') == 'candidate' and event.get('bus') == 'mcp' and isinstance(event.get('id'), str):
                 self.candidates[event['id']] = (time.monotonic(), event.get('startedAt'))
@@ -182,6 +194,27 @@ class Session:
                 if accepted:  # False means the reply arrived meanwhile
                     log({'kind': 'confirmed-lost', 'target': self.target_id[:8]})
                 self.candidates.pop(request_id, None)
+
+    def handle_stall(self, status) -> bool:
+        """Reload the main window when replies the host routed stop reaching it."""
+        if not status.get('stalled'):
+            return False
+        now = time.monotonic()
+        self.stall_reloads = [t for t in self.stall_reloads if now - t < STALL_RELOAD_WINDOW_SECONDS]
+        since_input = status.get('sinceInputMs')
+        typing = since_input is not None and since_input < STALL_QUIET_INPUT_MS
+        allowed = (self.is_main and not typing and len(self.stall_reloads) < STALL_RELOADS_PER_WINDOW
+                   and (not self.stall_reloads or now - self.stall_reloads[-1] >= STALL_RELOAD_GAP_SECONDS))
+        if not allowed:
+            if now - self.stall_logged_at >= 300:
+                self.stall_logged_at = now
+                log({'kind': 'channel-stall', 'target': self.target_id[:8], 'silentMs': status.get('silentMs'), 'typing': typing})
+            return False
+        self.stall_reloads.append(now)
+        log({'kind': 'channel-stall-reload', 'target': self.target_id[:8], 'silentMs': status.get('silentMs')})
+        self.call('Page.reload')
+        self.candidates.clear()
+        return True
 
     def close(self):
         try:

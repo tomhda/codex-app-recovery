@@ -10,7 +10,7 @@ import codex_control as control
 import guard_events
 from i18n import tr, get_language, set_language, resolve_language, save_language
 
-APP_VERSION = '1.0.1'
+APP_VERSION = '1.1.0'
 REFRESH_MS = 5000
 
 
@@ -61,6 +61,8 @@ def describe_overview(info: dict) -> dict:
         screen = tr('確認できません')
     elif page.get('blank'):
         screen = tr('起動画面のまま（{seconds}秒）').format(seconds=page.get('ageMs', 0) // 1000)
+    elif (page.get('guard') or {}).get('stalled'):
+        screen = tr('応答が届いていません（「画面を読み直す」で直ります）')
     else:
         screen = tr('表示中')
     return {'codex': codex, 'guard': guard, 'screen': screen, 'action': 'checkup'}

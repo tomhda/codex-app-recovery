@@ -15,6 +15,7 @@ An unofficial tool that corrects **stuck sends, unusable message queues, and sta
 | After stopping a turn, **Resume** on the queue sends nothing | The app-server queue's resume treats "the chat is open in this window" as "running" and returns | Only when no turn is running or starting, it corrects that one check during resume |
 | Deleting, sending or resuming queued messages, or sending a message, spins forever | A reply is sometimes lost inside the app while the window waits without a deadline | Re-sends read-only requests with the same content and hands the reply to the original request |
 | Startup stays on the logo (reloading fixes it) | The window misses the one-time app-server "initialized" message at startup | Asks the app to send the initialization information again |
+| Nothing reaches the window: sends spin and chats stay on "thinking" after the work finished | A large message is sent in parts, each waiting for the window's acknowledgement, and all other messages wait behind it. One acknowledgement can go missing | Acknowledges the stuck part again; if replies still do not arrive, reloads the window when nobody is typing |
 
 Sends (turn start, follow-up instructions), adding to the queue and resuming a chat are **never re-sent**, to avoid running anything twice.
 
@@ -76,12 +77,12 @@ Guard activity is written to `%LOCALAPPDATA%\CodexAppRecovery\guard\guard-YYYYMM
 
 - `guard.js` runs in the Codex windows (main, avatar, detached) and watches the app's own send and receive events (`codex-message-from-view` and `message`). It re-sends only read requests confirmed in this app version (an exact list of names). App-server requests without a reply after 45 s and internal requests after 30 s are re-sent as they were originally sent, at most three times; giving up returns no error. A reply is handed only to the same request on the same host.
 - The Resume and startup corrections run only on the verified app version (internal versions 26.928.31416 and 26.928.40906). The Resume correction does not run twice for a chat whose resume is still in progress, and stopping the guard restores the original code.
-- `guard_daemon.py` is the background helper. It loads the guard into each window, from the first script after a reload. When the Codex log shows a reply was routed to a live window after the request started while the window is still waiting, it re-reads after 5 s. It never reloads or restarts Codex. It exits two minutes after Codex closes.
+- `guard_daemon.py` is the background helper. It loads the guard into each window, from the first script after a reload. When the Codex log shows a reply was routed to a live window after the request started while the window is still waiting, it re-reads after 5 s. It reloads the main window only when replies Codex routed stop reaching it (see the table above; drafts in the message box are kept by Codex) and never restarts Codex. It exits two minutes after Codex closes.
 - `codex_control.py` starts, quits, reloads and checks Codex. Quitting uses Codex's own quit request. Forcing Codex to close when it does not respond is confirmed separately from the restart, and only the processes present at that confirmation are closed.
 
 ## Limits
 
-- What makes replies disappear inside the app is not known. The guard makes up for replies that never arrive; it cannot stop them from being lost.
+- One way replies stop reaching the window is a missing acknowledgement for a part of a large message (seen right after a start). Why that acknowledgement goes missing, and whether other replies are lost in other ways, is not known. The guard makes up for replies that never arrive; it cannot stop them from being lost.
 - Requests sent right after a new start, before the helper connects, are not covered (they are after the next reload).
 - Write requests (sends, adding, deleting or reordering queued items, saving settings) are never re-sent or failed.
 - When a queue read is rescued, actions waiting for it (Resume, delete, send now) continue. What you pressed runs within a few seconds.

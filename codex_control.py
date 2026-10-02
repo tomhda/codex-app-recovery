@@ -199,7 +199,7 @@ PAGE_STATUS = """(() => {
     ageMs: Math.round(Date.now() - performance.timeOrigin),
     ready: document.readyState,
     blank: !!document.body && document.body.innerText.trim().length === 0 && !document.querySelector('textarea, [contenteditable="true"]'),
-    guard: s ? { version: s.version, pendingMcp: s.pendingMcp, pendingFetch: s.pendingFetch,
+    guard: s ? { version: s.version, pendingMcp: s.pendingMcp, pendingFetch: s.pendingFetch, stalled: !!s.stalled,
                  oldestMs: Math.max(s.oldestMcp, s.oldestFetch), counters: s.counters } : null,
   };
 })()"""
