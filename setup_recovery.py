@@ -11,39 +11,49 @@ from i18n import tr, set_language, resolve_language
 ROOT = Path(__file__).resolve().parent
 
 
-def create_shortcuts(pythonw, *, desktop=False):
-    # Paths are passed as environment values, never interpolated into shell code.
+def create_shortcuts(pythonw, *, desktop=False, root=ROOT):
+    """Create 'Codex (guarded)' (daily start) and 'Codex Recovery' shortcuts.
+
+    Paths are passed as environment values, never interpolated into shell code.
+    """
     env = os.environ.copy()
     env['CODEX_RECOVERY_PYTHON'] = str(pythonw)
-    env['CODEX_RECOVERY_ROOT'] = str(ROOT)
+    env['CODEX_RECOVERY_ROOT'] = str(root)
     env['CODEX_RECOVERY_DESKTOP'] = '1' if desktop else '0'
+    env['CODEX_RECOVERY_NAMES'] = json.dumps([tr('Codex（ガード付き）'), tr('Codex 復旧')], ensure_ascii=False)
     script = r'''
     [Console]::OutputEncoding=[System.Text.Encoding]::UTF8
     $ErrorActionPreference='Stop'
     $shell=New-Object -ComObject WScript.Shell
+    $names=ConvertFrom-Json $env:CODEX_RECOVERY_NAMES
     $folders=@([Environment]::GetFolderPath('Programs'))
     if($env:CODEX_RECOVERY_DESKTOP -eq '1'){$folders+= [Environment]::GetFolderPath('Desktop')}
+    $entry=Join-Path $env:CODEX_RECOVERY_ROOT 'recovery.py'
+    $package=Get-AppxPackage OpenAI.Codex -ErrorAction SilentlyContinue | Sort-Object Version -Descending | Select-Object -First 1
+    $specs=@(@{name=$names[0]; args='"'+$entry+'" --launch'; desc='Start Codex with the self-heal guard'},
+             @{name=$names[1]; args='"'+$entry+'"'; desc='Codex status, repair and backup chat'})
     $created=@()
     foreach($folder in $folders){
-      $path=Join-Path $folder 'Codex App Recovery.lnk'
-      if(Test-Path -LiteralPath $path){
-        $old=$shell.CreateShortcut($path)
-        if($old.TargetPath -ne $env:CODEX_RECOVERY_PYTHON){throw 'A shortcut from a different installation already exists. Remove or rename it first.'}
+      foreach($spec in $specs){
+        $path=Join-Path $folder ($spec.name+'.lnk')
+        if(Test-Path -LiteralPath $path){
+          $old=$shell.CreateShortcut($path)
+          if($old.TargetPath -ne $env:CODEX_RECOVERY_PYTHON){throw ('A shortcut from a different installation already exists: '+$path)}
+        }
+        $shortcut=$shell.CreateShortcut($path)
+        $shortcut.TargetPath=$env:CODEX_RECOVERY_PYTHON
+        $shortcut.Arguments=$spec.args
+        $shortcut.WorkingDirectory=$env:CODEX_RECOVERY_ROOT
+        $shortcut.Description=$spec.desc
+        if($package -and $spec.args -like '*--launch'){ $shortcut.IconLocation=(Join-Path $package.InstallLocation 'app\ChatGPT.exe')+',0' }
+        $shortcut.Save()
+        $created+=$path
       }
-      $shortcut=$shell.CreateShortcut($path)
-      $shortcut.TargetPath=$env:CODEX_RECOVERY_PYTHON
-      $shortcut.Arguments='"'+(Join-Path $env:CODEX_RECOVERY_ROOT 'recovery.py')+'"'
-      $shortcut.WorkingDirectory=$env:CODEX_RECOVERY_ROOT
-      $shortcut.Description='Unofficial recovery utility for the Codex Windows app'
-      $icon=Join-Path $env:CODEX_RECOVERY_ROOT 'assets\recovery.ico'
-      if(Test-Path -LiteralPath $icon){$shortcut.IconLocation=$icon+',0'}
-      $shortcut.Save()
-      $created+=$path
     }
     ConvertTo-Json -InputObject $created -Compress
     '''
     result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
-                            env=env, capture_output=True, encoding='utf-8', errors='replace', timeout=20)
+                            env=env, capture_output=True, encoding='utf-8', errors='replace', timeout=30)
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
     return json.loads(result.stdout)

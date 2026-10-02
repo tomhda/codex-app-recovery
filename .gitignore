@@ -8,3 +8,7 @@ dist/
 .env
 .env.*
 node_modules/
+
+# local review bundles
+*.tmp.md
+review-bundle.txt
